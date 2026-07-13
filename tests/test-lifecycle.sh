@@ -71,7 +71,7 @@ wait_for_lease_count() {
   local actual
   while (( attempts > 0 )); do
     actual="$(find "${RUNTIME_DIR}/sessions" -maxdepth 1 -type f 2>/dev/null | wc -l)"
-    if [[ "${actual}" == "${expected}" ]]; then
+    if (( actual == expected )); then
       return 0
     fi
     attempts=$((attempts - 1))
@@ -95,7 +95,7 @@ set +e
 status=$?
 set -e
 [[ "${status}" == 7 ]] || fail "expected Claude exit code 7, got ${status}"
-[[ "$(wc -l < "${STARTS_FILE}")" == 1 ]] || fail "expected one proxy start"
+(( "$(wc -l < "${STARTS_FILE}")" == 1 )) || fail "expected one proxy start"
 grep -F "${work_dir}|http://127.0.0.1:${PORT}|--version" "${CLAUDE_RUNS_FILE}" >/dev/null || fail "cwd, base URL, or arguments were not preserved"
 [[ ! -f "${RUNTIME_DIR}/proxy.pid" ]] || fail "managed proxy metadata remained after last session"
 
@@ -107,7 +107,7 @@ wait_for_file "${STARTS_FILE}"
 MOCK_CLAUDE_SLEEP=2 "${ROOT_DIR}/scripts/claude-via-azure-openai.sh" second >"${TEST_DIR}/second.log" 2>&1 &
 second_pid=$!
 wait_for_lease_count 2
-[[ "$(wc -l < "${STARTS_FILE}")" == 1 ]] || fail "concurrent sessions started more than one proxy"
+(( "$(wc -l < "${STARTS_FILE}")" == 1 )) || fail "concurrent sessions started more than one proxy"
 wait "${first_pid}"
 if [[ ! -f "${RUNTIME_DIR}/proxy.pid" ]]; then
   printf '%s\n' '--- first session log ---' >&2
@@ -134,6 +134,7 @@ port = sys.argv[2]
 lines = path.read_text(encoding="utf-8").splitlines()
 path.write_text("\n".join(f"LITELLM_PORT={port}" if line.startswith("LITELLM_PORT=") else line for line in lines) + "\n", encoding="utf-8")
 PY
+export LITELLM_HOST=127.0.0.1
 export LITELLM_PORT="${PORT}"
 export LITELLM_MASTER_KEY=test-master-key
 export MOCK_PROXY_STARTS="${external_starts}"
