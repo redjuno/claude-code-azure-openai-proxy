@@ -5,7 +5,7 @@
 Claude Code는 OpenAI/Azure OpenAI API 키를 직접 넣는 방식을 공식 지원하지 않습니다. 그래서 중간에 LiteLLM 프록시를 띄우고, Claude Code가 이 프록시를 Anthropic API처럼 바라보게 만듭니다.
 
 ```text
-Claude Code -> LiteLLM 프록시 -> Azure OpenAI GPT-5.5 배포
+Claude Code -> LiteLLM 프록시 -> Azure OpenAI GPT-5.6-sol 배포
 ```
 
 ## 빠른 시작: clone부터 첫 실행까지
@@ -16,7 +16,7 @@ Linux/macOS 기준으로 아래 프로그램과 Azure OpenAI 배포가 필요합
 - `uvx`
 - `curl`
 - `make`
-- Azure OpenAI GPT-5.5 배포
+- Azure OpenAI GPT-5.6-sol 배포
 
 설치 여부를 확인합니다.
 
@@ -41,12 +41,12 @@ make setup
 AZURE_API_KEY=여기에_Azure_OpenAI_API_Key_입력
 AZURE_API_BASE=https://your-resource-name.openai.azure.com
 AZURE_API_VERSION=2025-03-01-preview
-AZURE_DEPLOYMENT_NAME=your-gpt-55-deployment-name
+AZURE_DEPLOYMENT_NAME=your-gpt-56sol-deployment-name
 
 LITELLM_HOST=127.0.0.1
 LITELLM_PORT=4000
 LITELLM_MASTER_KEY=sk-local-claude-code-proxy
-CLAUDE_CODE_MODEL_ALIAS=gpt-5.5
+CLAUDE_CODE_MODEL_ALIAS=gpt-5.6-sol
 ```
 
 설정과 자동 수명 주기를 확인한 뒤 `claude-azure` 명령을 설치합니다.
@@ -155,7 +155,7 @@ make test
 
 ```json
 {
-  "model": "gpt-5.5",
+  "model": "gpt-5.6-sol",
   "content": [
     {
       "type": "text",
@@ -221,10 +221,10 @@ make stop-force
 ```bash
 ANTHROPIC_BASE_URL=http://127.0.0.1:4000
 ANTHROPIC_AUTH_TOKEN=$LITELLM_MASTER_KEY
-ANTHROPIC_MODEL=gpt-5.5
-ANTHROPIC_DEFAULT_SONNET_MODEL=gpt-5.5
-ANTHROPIC_DEFAULT_HAIKU_MODEL=gpt-5.5
-CLAUDE_CODE_SUBAGENT_MODEL=gpt-5.5
+ANTHROPIC_MODEL=gpt-5.6-sol
+ANTHROPIC_DEFAULT_SONNET_MODEL=gpt-5.6-sol
+ANTHROPIC_DEFAULT_HAIKU_MODEL=gpt-5.6-sol
+CLAUDE_CODE_SUBAGENT_MODEL=gpt-5.6-sol
 ```
 
 Claude Code 입장에서는 `http://127.0.0.1:4000`에 있는 Anthropic 호환 API를 호출합니다. 실제로는 LiteLLM이 이 요청을 Azure OpenAI 요청으로 변환합니다.
@@ -331,7 +331,7 @@ The API deployment for this resource does not exist
 `.env`의 `AZURE_DEPLOYMENT_NAME`이 Azure OpenAI Studio의 deployment name과 정확히 같은지 확인하세요.
 
 ```bash
-AZURE_DEPLOYMENT_NAME=your-gpt-55-deployment-name
+AZURE_DEPLOYMENT_NAME=your-gpt-56sol-deployment-name
 ```
 
 ## Windows 제한망/폐쇄망 배포 가이드
@@ -353,7 +353,7 @@ Windows 개발 PC
   -> Claude Code
   -> 로컬 LiteLLM 프록시 또는 내부 공용 LiteLLM 프록시
   -> Azure OpenAI Private Endpoint / 내부 LLM Gateway
-  -> Azure OpenAI GPT-5.5 배포
+  -> Azure OpenAI GPT-5.6-sol 배포
 ```
 
 ### 케이스 A: 개발자 PC마다 로컬 프록시 실행
@@ -399,9 +399,9 @@ PowerShell 2: Claude Code 실행
 ```powershell
 $env:ANTHROPIC_BASE_URL = "https://llm-gateway.internal.example.com"
 $env:ANTHROPIC_AUTH_TOKEN = "내부_프록시_토큰"
-$env:ANTHROPIC_MODEL = "gpt-5.5"
-$env:ANTHROPIC_DEFAULT_SONNET_MODEL = "gpt-5.5"
-$env:ANTHROPIC_DEFAULT_HAIKU_MODEL = "gpt-5.5"
+$env:ANTHROPIC_MODEL = "gpt-5.6-sol"
+$env:ANTHROPIC_DEFAULT_SONNET_MODEL = "gpt-5.6-sol"
+$env:ANTHROPIC_DEFAULT_HAIKU_MODEL = "gpt-5.6-sol"
 claude
 ```
 
@@ -508,7 +508,7 @@ PowerShell에서는 `.env`를 자동으로 source하지 않습니다. Windows �
 $env:AZURE_API_KEY = "여기에_Azure_OpenAI_API_Key_입력"
 $env:AZURE_API_BASE = "https://your-resource-name.openai.azure.com"
 $env:AZURE_API_VERSION = "2025-03-01-preview"
-$env:AZURE_DEPLOYMENT_NAME = "your-gpt-55-deployment-name"
+$env:AZURE_DEPLOYMENT_NAME = "your-gpt-56sol-deployment-name"
 $env:LITELLM_MASTER_KEY = "sk-local-claude-code-proxy"
 
 litellm --config .\config\litellm.config.yaml --host 127.0.0.1 --port 4000
@@ -521,10 +521,10 @@ $env:ANTHROPIC_BASE_URL = "http://127.0.0.1:4000"
 $env:ANTHROPIC_AUTH_TOKEN = "sk-local-claude-code-proxy"
 Remove-Item Env:\ANTHROPIC_API_KEY -ErrorAction SilentlyContinue
 
-$env:ANTHROPIC_MODEL = "gpt-5.5"
-$env:ANTHROPIC_DEFAULT_SONNET_MODEL = "gpt-5.5"
-$env:ANTHROPIC_DEFAULT_HAIKU_MODEL = "gpt-5.5"
-$env:CLAUDE_CODE_SUBAGENT_MODEL = "gpt-5.5"
+$env:ANTHROPIC_MODEL = "gpt-5.6-sol"
+$env:ANTHROPIC_DEFAULT_SONNET_MODEL = "gpt-5.6-sol"
+$env:ANTHROPIC_DEFAULT_HAIKU_MODEL = "gpt-5.6-sol"
+$env:CLAUDE_CODE_SUBAGENT_MODEL = "gpt-5.6-sol"
 
 $env:CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC = "1"
 $env:DISABLE_TELEMETRY = "1"
@@ -552,7 +552,7 @@ curl.exe http://127.0.0.1:4000/v1/messages `
   -H "x-api-key: sk-local-claude-code-proxy" `
   -H "anthropic-version: 2023-06-01" `
   -H "content-type: application/json" `
-  -d "{ `"model`": `"gpt-5.5`", `"max_tokens`": 64, `"messages`": [{ `"role`": `"user`", `"content`": `"Reply with one short sentence confirming the proxy works.`" }] }"
+  -d "{ `"model`": `"gpt-5.6-sol`", `"max_tokens`": 64, `"messages`": [{ `"role`": `"user`", `"content`": `"Reply with one short sentence confirming the proxy works.`" }] }"
 ```
 
 3. PowerShell 2에서 Claude Code 실행
