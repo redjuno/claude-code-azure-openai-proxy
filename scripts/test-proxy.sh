@@ -13,7 +13,7 @@ curl -sS "${BASE_URL}/v1/messages" \
   -H "anthropic-version: 2023-06-01" \
   -H "content-type: application/json" \
   -d '{
-    "model": "'"${CLAUDE_CODE_MODEL_ALIAS}"'",
+    "model": "'"${CLAUDE_CODE_OPUS_ALIAS}"'",
     "max_tokens": 64,
     "messages": [
       {

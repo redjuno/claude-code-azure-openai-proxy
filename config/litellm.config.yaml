@@ -1,12 +1,28 @@
 model_list:
-  - model_name: __CLAUDE_CODE_MODEL_ALIAS__
+  - model_name: __CLAUDE_CODE_OPUS_ALIAS__
     litellm_params:
-      model: azure/__AZURE_DEPLOYMENT_NAME__
+      model: azure/__AZURE_DEPLOYMENT_OPUS__
       api_key: os.environ/AZURE_API_KEY
       api_base: os.environ/AZURE_API_BASE
       api_version: os.environ/AZURE_API_VERSION
     model_info:
-      base_model: azure/__AZURE_DEPLOYMENT_NAME__
+      base_model: azure/__AZURE_DEPLOYMENT_OPUS__
+  - model_name: __CLAUDE_CODE_SONNET_ALIAS__
+    litellm_params:
+      model: azure/__AZURE_DEPLOYMENT_SONNET__
+      api_key: os.environ/AZURE_API_KEY
+      api_base: os.environ/AZURE_API_BASE
+      api_version: os.environ/AZURE_API_VERSION
+    model_info:
+      base_model: azure/__AZURE_DEPLOYMENT_SONNET__
+  - model_name: __CLAUDE_CODE_HAIKU_ALIAS__
+    litellm_params:
+      model: azure/__AZURE_DEPLOYMENT_HAIKU__
+      api_key: os.environ/AZURE_API_KEY
+      api_base: os.environ/AZURE_API_BASE
+      api_version: os.environ/AZURE_API_VERSION
+    model_info:
+      base_model: azure/__AZURE_DEPLOYMENT_HAIKU__
 
 litellm_settings:
   drop_params: true

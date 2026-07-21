@@ -5,8 +5,20 @@
 Claude Code는 OpenAI/Azure OpenAI API 키를 직접 넣는 방식을 공식 지원하지 않습니다. 그래서 중간에 LiteLLM 프록시를 띄우고, Claude Code가 이 프록시를 Anthropic API처럼 바라보게 만듭니다.
 
 ```text
-Claude Code -> LiteLLM 프록시 -> Azure OpenAI GPT-5.6-sol 배포
+Claude Code -> LiteLLM 프록시 -> Azure OpenAI 배포 (opus=Sol, sonnet=Terra, haiku=Luna)
 ```
+
+## 모델 티어 매핑
+
+Claude Code의 세 티어(opus/sonnet/haiku)를 서로 다른 Azure 배포로 라우팅합니다. `/model` 명령으로 티어를 바꾸면 아래 배포로 연결됩니다.
+
+| Claude 티어 | Azure 배포 (예) | 모델 | 특징 | 가격(입력/출력, 백만 토큰) |
+| --- | --- | --- | --- | --- |
+| opus | `gpt-5.6-sol` | **Sol** (최상위 플래그십) | 복잡한 코딩, 사이버 보안, 과학 연구, 장기 추론 등 최고 수준 지능이 필요한 고난도 작업 | $5 / $30 |
+| sonnet | `gpt-5.6-terra` | **Terra** (성능·비용 균형형) | 이전 세대(GPT-5.5) 수준 성능을 절반 가격에 제공, 일반 업무 자동화·문서 분석에 무난 | $2.50 / $15 |
+| haiku | `gpt-5.6-luna` | **Luna** (속도·비용 최적화형) | 가장 빠르고 저렴, 대량 데이터 분류·단순 정보 추출 등 속도·가성비 우선 작업 | $1 / $6 |
+
+각 매핑은 `.env`의 `AZURE_DEPLOYMENT_OPUS`/`AZURE_DEPLOYMENT_SONNET`/`AZURE_DEPLOYMENT_HAIKU`(Azure 배포명)와 `CLAUDE_CODE_OPUS_ALIAS`/`CLAUDE_CODE_SONNET_ALIAS`/`CLAUDE_CODE_HAIKU_ALIAS`(Claude Code에 노출할 별칭)로 설정합니다.
 
 ## 빠른 시작: clone부터 첫 실행까지
 
@@ -41,12 +53,20 @@ make setup
 AZURE_API_KEY=여기에_Azure_OpenAI_API_Key_입력
 AZURE_API_BASE=https://your-resource-name.openai.azure.com
 AZURE_API_VERSION=2025-03-01-preview
-AZURE_DEPLOYMENT_NAME=your-gpt-56sol-deployment-name
+
+# Claude 티어별 Azure 배포 (opus=Sol, sonnet=Terra, haiku=Luna)
+AZURE_DEPLOYMENT_OPUS=your-gpt-56-sol-deployment-name
+AZURE_DEPLOYMENT_SONNET=your-gpt-56-terra-deployment-name
+AZURE_DEPLOYMENT_HAIKU=your-gpt-56-luna-deployment-name
 
 LITELLM_HOST=127.0.0.1
 LITELLM_PORT=4000
 LITELLM_MASTER_KEY=sk-local-claude-code-proxy
-CLAUDE_CODE_MODEL_ALIAS=gpt-5.6-sol
+
+# Claude Code에 노출할 티어별 별칭
+CLAUDE_CODE_OPUS_ALIAS=opus
+CLAUDE_CODE_SONNET_ALIAS=sonnet
+CLAUDE_CODE_HAIKU_ALIAS=haiku
 ```
 
 설정과 자동 수명 주기를 확인한 뒤 `claude-azure` 명령을 설치합니다.
@@ -72,11 +92,11 @@ claude-azure
 주의할 점:
 
 - `AZURE_API_BASE`는 Azure OpenAI 리소스의 endpoint입니다.
-- `AZURE_DEPLOYMENT_NAME`은 모델 이름이 아니라 Azure에서 만든 deployment name입니다.
+- `AZURE_DEPLOYMENT_OPUS`/`AZURE_DEPLOYMENT_SONNET`/`AZURE_DEPLOYMENT_HAIKU`는 모델 이름이 아니라 Azure에서 만든 deployment name이며, Claude의 opus/sonnet/haiku 티어에 각각 매핑됩니다.
 - `AZURE_API_VERSION`은 `2025-03-01-preview` 이상이어야 합니다.
 - `LITELLM_MASTER_KEY`는 Claude Code와 로컬 LiteLLM 사이에서 사용하는 로컬 인증 키입니다. 실제 Anthropic API 키가 아닙니다.
 - `LITELLM_HOST`는 외부에 노출되지 않도록 기본값 `127.0.0.1` 사용을 권장합니다.
-- `CLAUDE_CODE_MODEL_ALIAS`는 Claude Code에 노출할 이름이며 Azure deployment name과 달라도 됩니다.
+- `CLAUDE_CODE_OPUS_ALIAS`/`CLAUDE_CODE_SONNET_ALIAS`/`CLAUDE_CODE_HAIKU_ALIAS`는 Claude Code에 노출할 티어별 이름이며 Azure deployment name과 달라도 됩니다.
 - `.env`는 Git에 올라가지 않도록 무시 처리되어 있습니다.
 - `make doctor`에서 `env ok`가 나오면 환경 설정 검사가 완료된 것입니다.
 - `claude-azure`를 찾지 못하면 `source ~/.zshrc`를 실행하세요. shim을 직접 사용할 경우에는 `~/.local/bin`이 `PATH`에 포함되어 있어야 합니다.
@@ -221,10 +241,10 @@ make stop-force
 ```bash
 ANTHROPIC_BASE_URL=http://127.0.0.1:4000
 ANTHROPIC_AUTH_TOKEN=$LITELLM_MASTER_KEY
-ANTHROPIC_MODEL=gpt-5.6-sol
-ANTHROPIC_DEFAULT_SONNET_MODEL=gpt-5.6-sol
-ANTHROPIC_DEFAULT_HAIKU_MODEL=gpt-5.6-sol
-CLAUDE_CODE_SUBAGENT_MODEL=gpt-5.6-sol
+ANTHROPIC_MODEL=opus
+ANTHROPIC_DEFAULT_SONNET_MODEL=sonnet
+ANTHROPIC_DEFAULT_HAIKU_MODEL=haiku
+CLAUDE_CODE_SUBAGENT_MODEL=sonnet
 ```
 
 Claude Code 입장에서는 `http://127.0.0.1:4000`에 있는 Anthropic 호환 API를 호출합니다. 실제로는 LiteLLM이 이 요청을 Azure OpenAI 요청으로 변환합니다.
@@ -233,9 +253,15 @@ Claude Code 입장에서는 `http://127.0.0.1:4000`에 있는 Anthropic 호환 A
 
 ```yaml
 model_list:
-  - model_name: __CLAUDE_CODE_MODEL_ALIAS__
+  - model_name: __CLAUDE_CODE_OPUS_ALIAS__
     litellm_params:
-      model: azure/__AZURE_DEPLOYMENT_NAME__
+      model: azure/__AZURE_DEPLOYMENT_OPUS__
+  - model_name: __CLAUDE_CODE_SONNET_ALIAS__
+    litellm_params:
+      model: azure/__AZURE_DEPLOYMENT_SONNET__
+  - model_name: __CLAUDE_CODE_HAIKU_ALIAS__
+    litellm_params:
+      model: azure/__AZURE_DEPLOYMENT_HAIKU__
 ```
 
 `make proxy`를 실행하면 `.env` 값을 읽어서 `.generated/litellm.config.yaml`을 만들고 LiteLLM을 실행합니다.
@@ -328,10 +354,12 @@ The API deployment for this resource does not exist
 
 해결:
 
-`.env`의 `AZURE_DEPLOYMENT_NAME`이 Azure OpenAI Studio의 deployment name과 정확히 같은지 확인하세요.
+`.env`의 `AZURE_DEPLOYMENT_OPUS`/`AZURE_DEPLOYMENT_SONNET`/`AZURE_DEPLOYMENT_HAIKU`가 Azure OpenAI Studio의 deployment name과 정확히 같은지 확인하세요.
 
 ```bash
-AZURE_DEPLOYMENT_NAME=your-gpt-56sol-deployment-name
+AZURE_DEPLOYMENT_OPUS=your-gpt-56-sol-deployment-name
+AZURE_DEPLOYMENT_SONNET=your-gpt-56-terra-deployment-name
+AZURE_DEPLOYMENT_HAIKU=your-gpt-56-luna-deployment-name
 ```
 
 ## Windows 제한망/폐쇄망 배포 가이드
@@ -399,9 +427,9 @@ PowerShell 2: Claude Code 실행
 ```powershell
 $env:ANTHROPIC_BASE_URL = "https://llm-gateway.internal.example.com"
 $env:ANTHROPIC_AUTH_TOKEN = "내부_프록시_토큰"
-$env:ANTHROPIC_MODEL = "gpt-5.6-sol"
-$env:ANTHROPIC_DEFAULT_SONNET_MODEL = "gpt-5.6-sol"
-$env:ANTHROPIC_DEFAULT_HAIKU_MODEL = "gpt-5.6-sol"
+$env:ANTHROPIC_MODEL = "opus"
+$env:ANTHROPIC_DEFAULT_SONNET_MODEL = "sonnet"
+$env:ANTHROPIC_DEFAULT_HAIKU_MODEL = "haiku"
 claude
 ```
 
@@ -508,7 +536,9 @@ PowerShell에서는 `.env`를 자동으로 source하지 않습니다. Windows �
 $env:AZURE_API_KEY = "여기에_Azure_OpenAI_API_Key_입력"
 $env:AZURE_API_BASE = "https://your-resource-name.openai.azure.com"
 $env:AZURE_API_VERSION = "2025-03-01-preview"
-$env:AZURE_DEPLOYMENT_NAME = "your-gpt-56sol-deployment-name"
+$env:AZURE_DEPLOYMENT_OPUS = "your-gpt-56-sol-deployment-name"
+$env:AZURE_DEPLOYMENT_SONNET = "your-gpt-56-terra-deployment-name"
+$env:AZURE_DEPLOYMENT_HAIKU = "your-gpt-56-luna-deployment-name"
 $env:LITELLM_MASTER_KEY = "sk-local-claude-code-proxy"
 
 litellm --config .\config\litellm.config.yaml --host 127.0.0.1 --port 4000
@@ -521,10 +551,10 @@ $env:ANTHROPIC_BASE_URL = "http://127.0.0.1:4000"
 $env:ANTHROPIC_AUTH_TOKEN = "sk-local-claude-code-proxy"
 Remove-Item Env:\ANTHROPIC_API_KEY -ErrorAction SilentlyContinue
 
-$env:ANTHROPIC_MODEL = "gpt-5.6-sol"
-$env:ANTHROPIC_DEFAULT_SONNET_MODEL = "gpt-5.6-sol"
-$env:ANTHROPIC_DEFAULT_HAIKU_MODEL = "gpt-5.6-sol"
-$env:CLAUDE_CODE_SUBAGENT_MODEL = "gpt-5.6-sol"
+$env:ANTHROPIC_MODEL = "opus"
+$env:ANTHROPIC_DEFAULT_SONNET_MODEL = "sonnet"
+$env:ANTHROPIC_DEFAULT_HAIKU_MODEL = "haiku"
+$env:CLAUDE_CODE_SUBAGENT_MODEL = "sonnet"
 
 $env:CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC = "1"
 $env:DISABLE_TELEMETRY = "1"
