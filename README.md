@@ -244,11 +244,13 @@ Claude Code 입장에서는 `http://127.0.0.1:4000`에 있는 Anthropic 호환 A
 model_list:
   - model_name: __CLAUDE_CODE_OPUS_ALIAS__
     litellm_params:
-      model: azure/__AZURE_DEPLOYMENT_OPUS__
+      model: azure/responses/__AZURE_DEPLOYMENT_OPUS__
   - model_name: __CLAUDE_CODE_FABLE_ALIAS__
     litellm_params:
-      model: azure/__AZURE_DEPLOYMENT_FABLE__
+      model: azure/responses/__AZURE_DEPLOYMENT_FABLE__
 ```
+
+`azure/responses/` 접두사는 요청을 Azure `/v1/responses`로 보냅니다. `/v1/chat/completions`는 reasoning이 켜진 상태의 function tool을 거부하기 때문에(`Function tools with reasoning_effort are not supported`), 이 접두사가 없으면 Claude Code의 도구 호출이 전부 400으로 실패합니다.
 
 `model_info.base_model`은 `azure/gpt-5`로 고정되어 있습니다. LiteLLM이 모르는 base_model이면 `max_completion_tokens` 대신 `max_tokens`를 보내서 Azure가 요청을 거부합니다.
 

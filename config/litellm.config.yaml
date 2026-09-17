@@ -1,9 +1,15 @@
 # Claude Code tier -> Azure OpenAI deployment.
 # Placeholders are filled by scripts/start-proxy.sh from .env.
+#
+# The azure/responses/ prefix routes through Azure's /v1/responses endpoint.
+# /v1/chat/completions rejects function tools while reasoning is on
+# ("Function tools with reasoning_effort are not supported"), and LiteLLM only
+# bridges to /responses on its own for deployment names it recognises as
+# gpt-5.4+, which these are not.
 model_list:
   - model_name: __CLAUDE_CODE_OPUS_ALIAS__
     litellm_params:
-      model: azure/__AZURE_DEPLOYMENT_OPUS__
+      model: azure/responses/__AZURE_DEPLOYMENT_OPUS__
       api_key: os.environ/AZURE_API_KEY
       api_base: os.environ/AZURE_API_BASE
       api_version: os.environ/AZURE_API_VERSION
@@ -14,7 +20,7 @@ model_list:
 
   - model_name: __CLAUDE_CODE_FABLE_ALIAS__
     litellm_params:
-      model: azure/__AZURE_DEPLOYMENT_FABLE__
+      model: azure/responses/__AZURE_DEPLOYMENT_FABLE__
       api_key: os.environ/AZURE_API_KEY
       api_base: os.environ/AZURE_API_BASE
       api_version: os.environ/AZURE_API_VERSION
