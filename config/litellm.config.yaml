@@ -1,10 +1,9 @@
-# Deployments on Azure OpenAI account aoai-jh-krc-01 (RG shinhanbank-poc-ai-krc-rg001-258).
-# Both live on the same account, so they share AZURE_API_BASE / AZURE_API_KEY.
-# To add another deployment, copy one block and change the two names.
+# Claude Code tier -> Azure OpenAI deployment.
+# Placeholders are filled by scripts/start-proxy.sh from .env.
 model_list:
-  - model_name: gpt-sol
+  - model_name: __CLAUDE_CODE_OPUS_ALIAS__
     litellm_params:
-      model: azure/gpt-sol
+      model: azure/__AZURE_DEPLOYMENT_OPUS__
       api_key: os.environ/AZURE_API_KEY
       api_base: os.environ/AZURE_API_BASE
       api_version: os.environ/AZURE_API_VERSION
@@ -13,9 +12,9 @@ model_list:
       # instead of max_completion_tokens and Azure rejects the request.
       base_model: azure/gpt-5
 
-  - model_name: gpt-astra
+  - model_name: __CLAUDE_CODE_FABLE_ALIAS__
     litellm_params:
-      model: azure/gpt-astra
+      model: azure/__AZURE_DEPLOYMENT_FABLE__
       api_key: os.environ/AZURE_API_KEY
       api_base: os.environ/AZURE_API_BASE
       api_version: os.environ/AZURE_API_VERSION

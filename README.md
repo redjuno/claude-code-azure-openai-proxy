@@ -42,10 +42,17 @@ AZURE_API_KEY=여기에_Azure_OpenAI_API_Key_입력
 AZURE_API_BASE=https://your-resource-name.openai.azure.com
 AZURE_API_VERSION=2025-03-01-preview
 
+# Claude 티어별 Azure 배포 (opus=Sol, fable=Astra)
+AZURE_DEPLOYMENT_OPUS=your-gpt-56-sol-deployment-name
+AZURE_DEPLOYMENT_FABLE=your-gpt-6-astra-deployment-name
+
 LITELLM_HOST=127.0.0.1
 LITELLM_PORT=4000
 LITELLM_MASTER_KEY=sk-local-claude-code-proxy
-CLAUDE_CODE_MODEL_ALIAS=gpt-sol
+
+# Claude Code에 노출할 티어별 별칭
+CLAUDE_CODE_OPUS_ALIAS=opus
+CLAUDE_CODE_FABLE_ALIAS=fable
 ```
 
 설정과 자동 수명 주기를 확인한 뒤 `claude-azure` 명령을 설치합니다.
@@ -71,11 +78,12 @@ claude-azure
 주의할 점:
 
 - `AZURE_API_BASE`는 Azure OpenAI 리소스의 endpoint입니다.
-- 사용할 deployment는 `.env`가 아니라 `config/litellm.config.yaml`의 `model_list`에 등록합니다. 기본값은 `gpt-sol`, `gpt-astra` 두 개입니다.
+- `AZURE_DEPLOYMENT_OPUS`, `AZURE_DEPLOYMENT_FABLE`은 모델 이름이 아니라 Azure에서 만든 deployment name입니다.
 - `AZURE_API_VERSION`은 `2025-03-01-preview` 이상이어야 합니다.
 - `LITELLM_MASTER_KEY`는 Claude Code와 로컬 LiteLLM 사이에서 사용하는 로컬 인증 키입니다. 실제 Anthropic API 키가 아닙니다.
 - `LITELLM_HOST`는 외부에 노출되지 않도록 기본값 `127.0.0.1` 사용을 권장합니다.
-- `CLAUDE_CODE_MODEL_ALIAS`는 Claude Code가 사용할 모델이며, `config/litellm.config.yaml`의 `model_name` 중 하나와 같아야 합니다.
+- `CLAUDE_CODE_OPUS_ALIAS`, `CLAUDE_CODE_FABLE_ALIAS`는 Claude Code에 노출할 이름이며 Azure deployment name과 달라도 됩니다. Claude Code에서 `/model opus`, `/model fable`로 전환합니다.
+- 배포가 두 개뿐이므로 sonnet/haiku 티어도 opus 별칭으로 연결됩니다. 백그라운드 호출이 실패하지 않게 하기 위한 것입니다.
 - `.env`는 Git에 올라가지 않도록 무시 처리되어 있습니다.
 - `make doctor`에서 `env ok`가 나오면 환경 설정 검사가 완료된 것입니다.
 - `claude-azure`를 찾지 못하면 `source ~/.zshrc`를 실행하세요. shim을 직접 사용할 경우에는 `~/.local/bin`이 `PATH`에 포함되어 있어야 합니다.
@@ -154,7 +162,7 @@ make test
 
 ```json
 {
-  "model": "gpt-sol",
+  "model": "opus",
   "content": [
     {
       "type": "text",
@@ -220,29 +228,31 @@ make stop-force
 ```bash
 ANTHROPIC_BASE_URL=http://127.0.0.1:4000
 ANTHROPIC_AUTH_TOKEN=$LITELLM_MASTER_KEY
-ANTHROPIC_MODEL=gpt-sol
-ANTHROPIC_DEFAULT_SONNET_MODEL=gpt-sol
-ANTHROPIC_DEFAULT_HAIKU_MODEL=gpt-sol
-CLAUDE_CODE_SUBAGENT_MODEL=gpt-sol
+ANTHROPIC_MODEL=opus
+ANTHROPIC_DEFAULT_OPUS_MODEL=opus
+ANTHROPIC_DEFAULT_FABLE_MODEL=fable
+ANTHROPIC_DEFAULT_SONNET_MODEL=opus
+ANTHROPIC_DEFAULT_HAIKU_MODEL=opus
+CLAUDE_CODE_SUBAGENT_MODEL=opus
 ```
 
 Claude Code 입장에서는 `http://127.0.0.1:4000`에 있는 Anthropic 호환 API를 호출합니다. 실제로는 LiteLLM이 이 요청을 Azure OpenAI 요청으로 변환합니다.
 
-모델 연결은 `config/litellm.config.yaml`에 정의합니다.
+모델 연결은 `config/litellm.config.yaml` 템플릿을 사용합니다.
 
 ```yaml
 model_list:
-  - model_name: gpt-sol
+  - model_name: __CLAUDE_CODE_OPUS_ALIAS__
     litellm_params:
-      model: azure/gpt-sol
-  - model_name: gpt-astra
+      model: azure/__AZURE_DEPLOYMENT_OPUS__
+  - model_name: __CLAUDE_CODE_FABLE_ALIAS__
     litellm_params:
-      model: azure/gpt-astra
+      model: azure/__AZURE_DEPLOYMENT_FABLE__
 ```
 
-`model_name`은 Claude Code에 노출되는 이름, `azure/...` 뒤는 Azure deployment name입니다. 배포를 추가하려면 블록을 하나 더 복사해 두 이름만 바꾸면 됩니다.
+`model_info.base_model`은 `azure/gpt-5`로 고정되어 있습니다. LiteLLM이 모르는 base_model이면 `max_completion_tokens` 대신 `max_tokens`를 보내서 Azure가 요청을 거부합니다.
 
-`make proxy`를 실행하면 이 파일을 `.generated/litellm.config.yaml`로 복사하고 `.env`의 Azure 자격 증명을 환경 변수로 넘겨 LiteLLM을 실행합니다. Claude Code가 쓸 모델은 `CLAUDE_CODE_MODEL_ALIAS`로 고릅니다.
+`make proxy`를 실행하면 `.env` 값을 읽어서 `.generated/litellm.config.yaml`을 만들고 LiteLLM을 실행합니다.
 
 ## Azure OpenAI 프록시 사용 시 안정화 원칙
 
@@ -335,7 +345,7 @@ The API deployment for this resource does not exist
 `config/litellm.config.yaml`의 `model: azure/<deployment>` 값이 Azure OpenAI Studio의 deployment name과 정확히 같은지 확인하세요.
 
 ```yaml
-  - model_name: gpt-sol
+  - model_name: opus
     litellm_params:
       model: azure/gpt-sol
 ```
@@ -405,9 +415,9 @@ PowerShell 2: Claude Code 실행
 ```powershell
 $env:ANTHROPIC_BASE_URL = "https://llm-gateway.internal.example.com"
 $env:ANTHROPIC_AUTH_TOKEN = "내부_프록시_토큰"
-$env:ANTHROPIC_MODEL = "gpt-sol"
-$env:ANTHROPIC_DEFAULT_SONNET_MODEL = "gpt-sol"
-$env:ANTHROPIC_DEFAULT_HAIKU_MODEL = "gpt-sol"
+$env:ANTHROPIC_MODEL = "opus"
+$env:ANTHROPIC_DEFAULT_OPUS_MODEL = "opus"
+$env:ANTHROPIC_DEFAULT_FABLE_MODEL = "fable"
 claude
 ```
 
@@ -514,6 +524,8 @@ PowerShell에서는 `.env`를 자동으로 source하지 않습니다. Windows �
 $env:AZURE_API_KEY = "여기에_Azure_OpenAI_API_Key_입력"
 $env:AZURE_API_BASE = "https://your-resource-name.openai.azure.com"
 $env:AZURE_API_VERSION = "2025-03-01-preview"
+$env:AZURE_DEPLOYMENT_OPUS = "your-gpt-56-sol-deployment-name"
+$env:AZURE_DEPLOYMENT_FABLE = "your-gpt-6-astra-deployment-name"
 $env:LITELLM_MASTER_KEY = "sk-local-claude-code-proxy"
 
 litellm --config .\config\litellm.config.yaml --host 127.0.0.1 --port 4000
@@ -526,10 +538,12 @@ $env:ANTHROPIC_BASE_URL = "http://127.0.0.1:4000"
 $env:ANTHROPIC_AUTH_TOKEN = "sk-local-claude-code-proxy"
 Remove-Item Env:\ANTHROPIC_API_KEY -ErrorAction SilentlyContinue
 
-$env:ANTHROPIC_MODEL = "gpt-sol"
-$env:ANTHROPIC_DEFAULT_SONNET_MODEL = "gpt-sol"
-$env:ANTHROPIC_DEFAULT_HAIKU_MODEL = "gpt-sol"
-$env:CLAUDE_CODE_SUBAGENT_MODEL = "gpt-sol"
+$env:ANTHROPIC_MODEL = "opus"
+$env:ANTHROPIC_DEFAULT_OPUS_MODEL = "opus"
+$env:ANTHROPIC_DEFAULT_FABLE_MODEL = "fable"
+$env:ANTHROPIC_DEFAULT_SONNET_MODEL = "opus"
+$env:ANTHROPIC_DEFAULT_HAIKU_MODEL = "opus"
+$env:CLAUDE_CODE_SUBAGENT_MODEL = "opus"
 
 $env:CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC = "1"
 $env:DISABLE_TELEMETRY = "1"
@@ -557,7 +571,7 @@ curl.exe http://127.0.0.1:4000/v1/messages `
   -H "x-api-key: sk-local-claude-code-proxy" `
   -H "anthropic-version: 2023-06-01" `
   -H "content-type: application/json" `
-  -d "{ `"model`": `"gpt-sol`", `"max_tokens`": 64, `"messages`": [{ `"role`": `"user`", `"content`": `"Reply with one short sentence confirming the proxy works.`" }] }"
+  -d "{ `"model`": `"opus`", `"max_tokens`": 64, `"messages`": [{ `"role`": `"user`", `"content`": `"Reply with one short sentence confirming the proxy works.`" }] }"
 ```
 
 3. PowerShell 2에서 Claude Code 실행

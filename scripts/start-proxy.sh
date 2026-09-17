@@ -16,12 +16,17 @@ if [[ -n "${NODE_EXTRA_CA_CERTS:-}" ]]; then
   export UV_NATIVE_TLS=true
 fi
 
-cp "${ROOT_DIR}/config/litellm.config.yaml" "${GENERATED_CONFIG}"
-
-SERVED_MODELS="$(awk '/^  - model_name:/ {printf "%s%s", sep, $3; sep=", "}' "${GENERATED_CONFIG}")"
+sed \
+  -e "s#__AZURE_DEPLOYMENT_OPUS__#${AZURE_DEPLOYMENT_OPUS}#g" \
+  -e "s#__AZURE_DEPLOYMENT_FABLE__#${AZURE_DEPLOYMENT_FABLE}#g" \
+  -e "s#__CLAUDE_CODE_OPUS_ALIAS__#${CLAUDE_CODE_OPUS_ALIAS}#g" \
+  -e "s#__CLAUDE_CODE_FABLE_ALIAS__#${CLAUDE_CODE_FABLE_ALIAS}#g" \
+  "${ROOT_DIR}/config/litellm.config.yaml" > "${GENERATED_CONFIG}"
 
 printf 'Starting LiteLLM proxy on http://%s:%s\n' "${LITELLM_HOST}" "${LITELLM_PORT}"
-printf 'Serving models: %s (default alias: %s)\n' "${SERVED_MODELS}" "${CLAUDE_CODE_MODEL_ALIAS}"
+printf 'Exposing %s -> azure/%s, %s -> azure/%s\n' \
+  "${CLAUDE_CODE_OPUS_ALIAS}" "${AZURE_DEPLOYMENT_OPUS}" \
+  "${CLAUDE_CODE_FABLE_ALIAS}" "${AZURE_DEPLOYMENT_FABLE}"
 printf 'Azure API version: %s\n' "${AZURE_API_VERSION}"
 
 exec uvx \

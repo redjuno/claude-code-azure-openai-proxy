@@ -26,10 +26,13 @@ cat > "${ENV_FILE}" <<EOF
 AZURE_API_KEY=test-key
 AZURE_API_BASE=https://example.test
 AZURE_API_VERSION=2025-03-01-preview
+AZURE_DEPLOYMENT_OPUS=test-opus-deployment
+AZURE_DEPLOYMENT_FABLE=test-fable-deployment
 LITELLM_MASTER_KEY=test-master-key
 LITELLM_HOST=127.0.0.1
 LITELLM_PORT=${PORT}
-CLAUDE_CODE_MODEL_ALIAS=test-model
+CLAUDE_CODE_OPUS_ALIAS=test-model
+CLAUDE_CODE_FABLE_ALIAS=test-fable
 EOF
 
 cat > "${BIN_DIR}/claude" <<'EOF'
