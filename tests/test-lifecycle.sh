@@ -8,6 +8,8 @@ ENV_FILE="${TEST_DIR}/test.env"
 RUNTIME_DIR="${TEST_DIR}/runtime"
 STARTS_FILE="${TEST_DIR}/proxy-starts"
 CLAUDE_RUNS_FILE="${TEST_DIR}/claude-runs"
+AZ_RUNS_FILE="${TEST_DIR}/az-runs"
+COST_REFRESHES_FILE="${TEST_DIR}/cost-refreshes"
 PORT="${CLAUDE_AZURE_TEST_PORT:-$((20000 + RANDOM % 20000))}"
 
 cleanup() {
@@ -21,6 +23,8 @@ trap cleanup EXIT
 mkdir -p "${BIN_DIR}"
 : > "${STARTS_FILE}"
 : > "${CLAUDE_RUNS_FILE}"
+: > "${AZ_RUNS_FILE}"
+: > "${COST_REFRESHES_FILE}"
 
 cat > "${ENV_FILE}" <<EOF
 AZURE_API_KEY=test-key
@@ -45,6 +49,47 @@ exit "${MOCK_CLAUDE_EXIT:-0}"
 EOF
 chmod +x "${BIN_DIR}/claude"
 
+cat > "${BIN_DIR}/az" <<'EOF'
+#!/usr/bin/env bash
+printf '%s\n' "$*" >> "${MOCK_AZ_RUNS}"
+case "$1 $2" in
+  'account get-access-token')
+    sleep "${MOCK_AZ_ACCESS_TOKEN_SLEEP:-0}"
+    if [[ -n "${MOCK_AZ_LOGIN_MARKER:-}" && -e "${MOCK_AZ_LOGIN_MARKER}" ]]; then
+      exit 0
+    fi
+    status="${MOCK_AZ_ACCESS_TOKEN_EXIT:-0}"
+    if (( status != 0 )); then
+      printf '%s\n' "${MOCK_AZ_ACCESS_TOKEN_ERROR:-Interactive authentication is needed. Please run: az login}" >&2
+    fi
+    exit "${status}"
+    ;;
+  'rest --method')
+    exit "${MOCK_AZ_SUBSCRIPTION_ACCESS_EXIT:-0}"
+    ;;
+  'login ')
+    sleep "${MOCK_AZ_LOGIN_SLEEP:-0}"
+    status="${MOCK_AZ_LOGIN_EXIT:-0}"
+    if [[ "${status}" == 0 && -n "${MOCK_AZ_LOGIN_MARKER:-}" ]]; then
+      : > "${MOCK_AZ_LOGIN_MARKER}"
+    fi
+    exit "${status}"
+    ;;
+esac
+EOF
+chmod +x "${BIN_DIR}/az"
+
+cat > "${BIN_DIR}/azure-cost-refresh" <<'EOF'
+#!/usr/bin/env bash
+printf '%s\n' "$*" >> "${MOCK_COST_REFRESHES}"
+sleep "${MOCK_COST_REFRESH_SLEEP:-0}"
+if [[ -n "${MOCK_COST_REFRESH_DONE:-}" ]]; then
+  : > "${MOCK_COST_REFRESH_DONE}"
+fi
+exit "${MOCK_COST_REFRESH_EXIT:-0}"
+EOF
+chmod +x "${BIN_DIR}/azure-cost-refresh"
+
 export PATH="${BIN_DIR}:${PATH}"
 export CLAUDE_AZURE_ENV_FILE="${ENV_FILE}"
 export CLAUDE_AZURE_RUNTIME_DIR="${RUNTIME_DIR}"
@@ -53,6 +98,9 @@ export CLAUDE_AZURE_PROXY_START_TIMEOUT=5
 export CLAUDE_AZURE_PROXY_STOP_TIMEOUT=2
 export MOCK_PROXY_STARTS="${STARTS_FILE}"
 export MOCK_CLAUDE_RUNS="${CLAUDE_RUNS_FILE}"
+export MOCK_AZ_RUNS="${AZ_RUNS_FILE}"
+export MOCK_COST_REFRESHES="${COST_REFRESHES_FILE}"
+export CLAUDE_AZURE_COST_REFRESH_COMMAND="${BIN_DIR}/azure-cost-refresh"
 
 fail() {
   printf 'FAIL: %s\n' "$*" >&2
@@ -106,7 +154,89 @@ grep -Fx 'UV_NATIVE_TLS=true' "${PROXY_ENV_FILE}" >/dev/null || fail "uv native 
 grep -Fx 'public-ca' "${PROXY_ENV_FILE}" >/dev/null || fail "system CA was not passed to LiteLLM"
 grep -Fx 'vpn-ca' "${PROXY_ENV_FILE}" >/dev/null || fail "additional CA was not passed to LiteLLM"
 
+printf 'Test: authenticated Azure CLI skips login and refreshes cost\n'
+: > "${AZ_RUNS_FILE}"
+: > "${COST_REFRESHES_FILE}"
+"${ROOT_DIR}/scripts/claude-via-azure-openai.sh" authenticated
+! grep -Fx 'login' "${AZ_RUNS_FILE}" >/dev/null || fail "az login ran with a valid session"
+grep -Fx 'rest --method get --url https://management.azure.com/subscriptions/3c7b1819-c657-41ca-a22e-b6dc6d34fd98?api-version=2022-12-01' "${AZ_RUNS_FILE}" >/dev/null || fail "expected subscription access was not validated"
+! grep -F 'account set' "${AZ_RUNS_FILE}" >/dev/null || fail "launcher changed the global Azure subscription"
+wait_for_file "${COST_REFRESHES_FILE}"
+grep -Fx -- '--refresh' "${COST_REFRESHES_FILE}" >/dev/null || fail "cost refresh was not triggered"
+
+printf 'Test: detached cost refresh does not block Claude\n'
+detached_refreshes="${TEST_DIR}/detached-refreshes"
+detached_done="${TEST_DIR}/detached-done"
+: > "${CLAUDE_RUNS_FILE}"
+start_time="$(date +%s)"
+MOCK_COST_REFRESHES="${detached_refreshes}" MOCK_COST_REFRESH_DONE="${detached_done}" MOCK_COST_REFRESH_SLEEP=5 \
+  "${ROOT_DIR}/scripts/claude-via-azure-openai.sh" detached-refresh
+elapsed=$(( $(date +%s) - start_time ))
+(( elapsed < 5 )) || fail "cost refresh blocked Claude for ${elapsed}s"
+grep -F '|detached-refresh' "${CLAUDE_RUNS_FILE}" >/dev/null || fail "Claude did not run while cost refresh was pending"
+[[ ! -e "${detached_done}" ]] || fail "launcher waited for detached cost refresh to finish"
+
+printf 'Test: expired Azure CLI session logs in before selecting subscription\n'
+: > "${AZ_RUNS_FILE}"
+MOCK_AZ_LOGIN_MARKER="${TEST_DIR}/login-marker" MOCK_AZ_ACCESS_TOKEN_EXIT=1 \
+  "${ROOT_DIR}/scripts/claude-via-azure-openai.sh" login-required
+grep -Fx 'login' "${AZ_RUNS_FILE}" >/dev/null || fail "az login did not run for an expired session"
+expected_login_sequence=$'account get-access-token\nlogin\nrest --method get --url https://management.azure.com/subscriptions/3c7b1819-c657-41ca-a22e-b6dc6d34fd98?api-version=2022-12-01'
+[[ "$(command cat "${AZ_RUNS_FILE}")" == "${expected_login_sequence}" ]] || fail "unexpected Azure login sequence"
+
+printf 'Test: termination during Azure login stops the launcher\n'
+: > "${CLAUDE_RUNS_FILE}"
+MOCK_AZ_ACCESS_TOKEN_EXIT=1 MOCK_AZ_LOGIN_SLEEP=5 "${ROOT_DIR}/scripts/claude-via-azure-openai.sh" terminated >"${TEST_DIR}/terminate.log" 2>&1 &
+launcher_pid=$!
+sleep 0.2
+kill -TERM "${launcher_pid}"
+set +e
+wait "${launcher_pid}"
+status=$?
+set -e
+[[ "${status}" == 143 ]] || fail "expected terminated launcher exit 143, got ${status}"
+[[ ! -s "${CLAUDE_RUNS_FILE}" ]] || fail "Claude launched after preflight termination"
+
+printf 'Test: hanging Azure auth check does not block Claude\n'
+: > "${CLAUDE_RUNS_FILE}"
+start_time="$(date +%s)"
+CLAUDE_AZURE_PREFLIGHT_TIMEOUT=1 MOCK_AZ_ACCESS_TOKEN_SLEEP=5 "${ROOT_DIR}/scripts/claude-via-azure-openai.sh" auth-timeout
+elapsed=$(( $(date +%s) - start_time ))
+(( elapsed < 5 )) || fail "Azure auth check blocked Claude for ${elapsed}s"
+grep -F '|auth-timeout' "${CLAUDE_RUNS_FILE}" >/dev/null || fail "Claude did not run after Azure auth timeout"
+
+printf 'Test: missing Azure CLI does not block Claude\n'
+: > "${CLAUDE_RUNS_FILE}"
+mv "${BIN_DIR}/az" "${BIN_DIR}/az.disabled"
+PATH="${BIN_DIR}:/usr/bin:/bin" "${ROOT_DIR}/scripts/claude-via-azure-openai.sh" az-missing
+mv "${BIN_DIR}/az.disabled" "${BIN_DIR}/az"
+grep -F '|az-missing' "${CLAUDE_RUNS_FILE}" >/dev/null || fail "Claude did not run without Azure CLI"
+
+printf 'Test: Azure login failure does not block Claude\n'
+login_failure_refreshes="${TEST_DIR}/login-failure-refreshes"
+: > "${CLAUDE_RUNS_FILE}"
+MOCK_COST_REFRESHES="${login_failure_refreshes}" MOCK_AZ_ACCESS_TOKEN_EXIT=1 MOCK_AZ_LOGIN_EXIT=1 \
+  "${ROOT_DIR}/scripts/claude-via-azure-openai.sh" login-failed
+grep -F '|login-failed' "${CLAUDE_RUNS_FILE}" >/dev/null || fail "Claude did not run after Azure login failure"
+[[ ! -e "${login_failure_refreshes}" ]] || fail "cost refresh ran after Azure login failure"
+
+printf 'Test: Azure subscription failure does not block Claude\n'
+subscription_failure_refreshes="${TEST_DIR}/subscription-failure-refreshes"
+: > "${CLAUDE_RUNS_FILE}"
+MOCK_COST_REFRESHES="${subscription_failure_refreshes}" MOCK_AZ_SUBSCRIPTION_ACCESS_EXIT=1 \
+  "${ROOT_DIR}/scripts/claude-via-azure-openai.sh" subscription-failed
+grep -F '|subscription-failed' "${CLAUDE_RUNS_FILE}" >/dev/null || fail "Claude did not run after Azure subscription failure"
+[[ ! -e "${subscription_failure_refreshes}" ]] || fail "cost refresh ran after Azure subscription failure"
+
+printf 'Test: cost refresh failure does not block Claude\n'
+: > "${CLAUDE_RUNS_FILE}"
+: > "${COST_REFRESHES_FILE}"
+MOCK_COST_REFRESH_EXIT=1 "${ROOT_DIR}/scripts/claude-via-azure-openai.sh" refresh-failed
+wait_for_file "${COST_REFRESHES_FILE}"
+grep -F '|refresh-failed' "${CLAUDE_RUNS_FILE}" >/dev/null || fail "Claude did not run after cost refresh failure"
+
 printf 'Test: automatic start, cwd preservation, exit code, and automatic stop\n'
+: > "${STARTS_FILE}"
 work_dir="${TEST_DIR}/project"
 mkdir -p "${work_dir}"
 set +e
