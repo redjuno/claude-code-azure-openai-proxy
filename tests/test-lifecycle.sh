@@ -26,7 +26,6 @@ cat > "${ENV_FILE}" <<EOF
 AZURE_API_KEY=test-key
 AZURE_API_BASE=https://example.test
 AZURE_API_VERSION=2025-03-01-preview
-AZURE_DEPLOYMENT_NAME=test-model
 LITELLM_MASTER_KEY=test-master-key
 LITELLM_HOST=127.0.0.1
 LITELLM_PORT=${PORT}
@@ -83,6 +82,24 @@ wait_for_lease_count() {
   [[ -f "${TEST_DIR}/second.log" ]] && command cat "${TEST_DIR}/second.log" >&2
   fail "timed out waiting for ${expected} session leases"
 }
+
+printf 'Test: LiteLLM receives public and additional CA certificates\n'
+SYSTEM_CA_FILE="${TEST_DIR}/system-ca.pem"
+EXTRA_CA_FILE="${TEST_DIR}/extra-ca.pem"
+PROXY_ENV_FILE="${TEST_DIR}/proxy-env"
+printf '%s\n' 'public-ca' > "${SYSTEM_CA_FILE}"
+printf '%s\n' 'vpn-ca' > "${EXTRA_CA_FILE}"
+cat > "${BIN_DIR}/uvx" <<'EOF'
+#!/usr/bin/env bash
+printf 'UV_NATIVE_TLS=%s\n' "${UV_NATIVE_TLS:-}" > "${MOCK_PROXY_ENV}"
+command cat "${SSL_CERT_FILE}" >> "${MOCK_PROXY_ENV}"
+EOF
+chmod +x "${BIN_DIR}/uvx"
+SYSTEM_CA_FILE="${SYSTEM_CA_FILE}" NODE_EXTRA_CA_CERTS="${EXTRA_CA_FILE}" MOCK_PROXY_ENV="${PROXY_ENV_FILE}" \
+  "${ROOT_DIR}/scripts/start-proxy.sh"
+grep -Fx 'UV_NATIVE_TLS=true' "${PROXY_ENV_FILE}" >/dev/null || fail "uv native TLS was not enabled"
+grep -Fx 'public-ca' "${PROXY_ENV_FILE}" >/dev/null || fail "system CA was not passed to LiteLLM"
+grep -Fx 'vpn-ca' "${PROXY_ENV_FILE}" >/dev/null || fail "additional CA was not passed to LiteLLM"
 
 printf 'Test: automatic start, cwd preservation, exit code, and automatic stop\n'
 work_dir="${TEST_DIR}/project"

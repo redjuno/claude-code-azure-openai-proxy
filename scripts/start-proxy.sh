@@ -9,13 +9,19 @@ GENERATED_DIR="${ROOT_DIR}/.generated"
 GENERATED_CONFIG="${GENERATED_DIR}/litellm.config.yaml"
 mkdir -p "${GENERATED_DIR}"
 
-sed \
-  -e "s#__AZURE_DEPLOYMENT_NAME__#${AZURE_DEPLOYMENT_NAME}#g" \
-  -e "s#__CLAUDE_CODE_MODEL_ALIAS__#${CLAUDE_CODE_MODEL_ALIAS}#g" \
-  "${ROOT_DIR}/config/litellm.config.yaml" > "${GENERATED_CONFIG}"
+if [[ -n "${NODE_EXTRA_CA_CERTS:-}" ]]; then
+  SSL_CERT_FILE="${GENERATED_DIR}/ca-bundle.pem"
+  command cat "${SYSTEM_CA_FILE:-/etc/ssl/cert.pem}" "${NODE_EXTRA_CA_CERTS}" > "${SSL_CERT_FILE}"
+  export SSL_CERT_FILE
+  export UV_NATIVE_TLS=true
+fi
+
+cp "${ROOT_DIR}/config/litellm.config.yaml" "${GENERATED_CONFIG}"
+
+SERVED_MODELS="$(awk '/^  - model_name:/ {printf "%s%s", sep, $3; sep=", "}' "${GENERATED_CONFIG}")"
 
 printf 'Starting LiteLLM proxy on http://%s:%s\n' "${LITELLM_HOST}" "${LITELLM_PORT}"
-printf 'Exposing model alias: %s -> azure/%s\n' "${CLAUDE_CODE_MODEL_ALIAS}" "${AZURE_DEPLOYMENT_NAME}"
+printf 'Serving models: %s (default alias: %s)\n' "${SERVED_MODELS}" "${CLAUDE_CODE_MODEL_ALIAS}"
 printf 'Azure API version: %s\n' "${AZURE_API_VERSION}"
 
 exec uvx \

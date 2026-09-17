@@ -1,12 +1,26 @@
+# Deployments on Azure OpenAI account aoai-jh-krc-01 (RG shinhanbank-poc-ai-krc-rg001-258).
+# Both live on the same account, so they share AZURE_API_BASE / AZURE_API_KEY.
+# To add another deployment, copy one block and change the two names.
 model_list:
-  - model_name: __CLAUDE_CODE_MODEL_ALIAS__
+  - model_name: gpt-sol
     litellm_params:
-      model: azure/__AZURE_DEPLOYMENT_NAME__
+      model: azure/gpt-sol
       api_key: os.environ/AZURE_API_KEY
       api_base: os.environ/AZURE_API_BASE
       api_version: os.environ/AZURE_API_VERSION
     model_info:
-      base_model: azure/__AZURE_DEPLOYMENT_NAME__
+      # base_model must be a model LiteLLM knows, otherwise it sends max_tokens
+      # instead of max_completion_tokens and Azure rejects the request.
+      base_model: azure/gpt-5
+
+  - model_name: gpt-astra
+    litellm_params:
+      model: azure/gpt-astra
+      api_key: os.environ/AZURE_API_KEY
+      api_base: os.environ/AZURE_API_BASE
+      api_version: os.environ/AZURE_API_VERSION
+    model_info:
+      base_model: azure/gpt-5
 
 litellm_settings:
   drop_params: true
