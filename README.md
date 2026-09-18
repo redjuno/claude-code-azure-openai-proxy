@@ -91,6 +91,14 @@ claude-azure
 - Azure Cost HUD preflight는 `CLAUDE_AZURE_TENANT_ID`와 `CLAUDE_AZURE_COST_SUBSCRIPTION_ID`를 둘 다 설정할 때만 활성화됩니다.
 - 인증이 만료되면 `az login --tenant "$CLAUDE_AZURE_TENANT_ID"`가 실행됩니다. 로그인 취소, RBAC 오류, 비용 갱신 실패가 있어도 Claude Code는 계속 시작합니다.
 - 비대화형 Azure 검사는 기본 5초 제한입니다. 필요하면 `CLAUDE_AZURE_PREFLIGHT_TIMEOUT`을 조정하고, 기본 helper 대신 실행 파일을 쓰려면 `CLAUDE_AZURE_COST_REFRESH_SCRIPT`에 경로를 지정합니다.
+- HUD가 실제로 비용을 조회하는 대상은 저장소 밖 `~/.claude/azure-cost.json`의 `subscription_id`와 `resource_id`입니다. `CLAUDE_AZURE_COST_SUBSCRIPTION_ID`와 같은 구독이어야 하고, `resource_id`는 `AZURE_API_BASE`가 가리키는 Azure OpenAI 계정이어야 합니다. 셋 중 하나만 옛 값으로 남으면 지금 쓰는 배포의 비용이 HUD에 잡히지 않습니다.
+```json
+{
+  "subscription_id": "<subscription-id>",
+  "resource_id": "/subscriptions/<subscription-id>/resourceGroups/<rg>/providers/Microsoft.CognitiveServices/accounts/<account>"
+}
+```
+- 위 값을 바꾼 뒤에는 `~/.claude/azure-cost-cache.json`을 지워야 옛 비용이 남지 않습니다. Cost Management API는 호출 빈도를 엄격히 제한하므로, 갱신 직후 `{"error": "throttled", "next_retry_at": ...}`가 보이면 그 시각까지 기다리면 됩니다.
 - `CLAUDE_CODE_OPUS_ALIAS`, `CLAUDE_CODE_FABLE_ALIAS`, `CLAUDE_CODE_HAIKU_ALIAS`는 Claude Code에 노출할 이름이며 Azure deployment name과 달라도 됩니다. Claude Code에서 `/model opus`, `/model fable`, `/model haiku`로 전환합니다.
 - sonnet 티어에 대응하는 배포가 없어서 sonnet은 opus 별칭으로 연결됩니다. 백그라운드 호출이 실패하지 않게 하기 위한 것입니다.
 - `.env`는 Git에 올라가지 않도록 무시 처리되어 있습니다.
