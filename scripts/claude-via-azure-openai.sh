@@ -26,7 +26,105 @@ export CLAUDE_CODE_MAX_CONTEXT_TOKENS="${CLAUDE_CODE_MAX_CONTEXT_TOKENS:-922000}
 export CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC="${CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC:-1}"
 export DISABLE_TELEMETRY="${DISABLE_TELEMETRY:-1}"
 
+run_with_timeout() {
+  local timeout_seconds="$1"
+  shift
+  python3 -c '
+import os
+import signal
+import subprocess
+import sys
+
+process = subprocess.Popen(sys.argv[2:], start_new_session=True)
+
+def terminate(exit_code):
+    if process.poll() is None:
+        os.killpg(process.pid, signal.SIGTERM)
+        try:
+            process.wait(timeout=1)
+        except subprocess.TimeoutExpired:
+            os.killpg(process.pid, signal.SIGKILL)
+            process.wait()
+    raise SystemExit(exit_code)
+
+for handled_signal in (signal.SIGINT, signal.SIGTERM, signal.SIGHUP):
+    signal.signal(handled_signal, lambda number, _frame: terminate(128 + number))
+
+try:
+    raise SystemExit(process.wait(timeout=float(sys.argv[1])))
+except subprocess.TimeoutExpired:
+    terminate(124)
+' "${timeout_seconds}" "$@" &
+  preflight_pid=$!
+  local status
+  set +e
+  wait "${preflight_pid}"
+  status=$?
+  set -e
+  preflight_pid=""
+  return "${status}"
+}
+
+run_preflight_command() {
+  "$@" <&0 &
+  preflight_pid=$!
+  local status
+  set +e
+  wait "${preflight_pid}"
+  status=$?
+  set -e
+  preflight_pid=""
+  return "${status}"
+}
+
+azure_cost_preflight() {
+  local tenant_id="${CLAUDE_AZURE_TENANT_ID:-}"
+  local subscription_id="${CLAUDE_AZURE_COST_SUBSCRIPTION_ID:-}"
+  local refresh_script="${CLAUDE_AZURE_COST_REFRESH_SCRIPT:-${HOME:-}/.claude/azure_cost_statusline.py}"
+  local login_stdin="${CLAUDE_AZURE_LOGIN_STDIN:-/dev/tty}"
+  local timeout_seconds="${CLAUDE_AZURE_PREFLIGHT_TIMEOUT:-5}"
+
+  if [[ -z "${tenant_id}" || -z "${subscription_id}" ]]; then
+    return
+  fi
+  if ! command -v az >/dev/null 2>&1; then
+    printf 'Warning: Azure CLI not found; cost HUD refresh skipped.\n' >&2
+    return
+  fi
+
+  local auth_error
+  auth_error="$(mktemp)"
+  if ! run_with_timeout "${timeout_seconds}" az account get-access-token \
+    >/dev/null 2>"${auth_error}"; then
+    if grep -Eqi 'az login|interactive authentication|login required' "${auth_error}"; then
+      rm -f "${auth_error}"
+      printf 'Azure CLI login required for cost HUD.\n'
+      if ! run_preflight_command az login --tenant "${tenant_id}" <"${login_stdin}"; then
+        printf 'Warning: Azure login failed; continuing without cost refresh.\n' >&2
+        return
+      fi
+    else
+      rm -f "${auth_error}"
+      printf 'Warning: Azure authentication check failed; continuing without cost refresh.\n' >&2
+      return
+    fi
+  else
+    rm -f "${auth_error}"
+  fi
+
+  if ! run_with_timeout "${timeout_seconds}" az rest --method get \
+    --url "https://management.azure.com/subscriptions/${subscription_id}?api-version=2022-12-01" >/dev/null 2>&1; then
+    printf 'Warning: could not access Azure subscription; continuing without cost refresh.\n' >&2
+    return
+  fi
+
+  if [[ -x "${refresh_script}" ]]; then
+    nohup "${refresh_script}" --refresh >/dev/null 2>&1 &
+  fi
+}
+
 session_id="session-$$"
+preflight_pid=""
 claude_pid=""
 session_acquired=0
 cleanup_started=0
@@ -54,8 +152,15 @@ cleanup() {
 forward_signal() {
   local signal="$1"
 
-  if [[ -n "${claude_pid}" ]] && process_is_alive "${claude_pid}"; then
-    kill -"${signal}" "${claude_pid}" 2>/dev/null || true
+  if [[ -n "${preflight_pid}" ]] && process_is_alive "${preflight_pid}"; then
+    kill -"${signal}" "${preflight_pid}" 2>/dev/null || true
+    return
+  fi
+  if [[ -n "${claude_pid}" ]]; then
+    if process_is_alive "${claude_pid}"; then
+      kill -"${signal}" "${claude_pid}" 2>/dev/null || true
+    fi
+    return
   fi
 }
 
@@ -63,6 +168,8 @@ trap 'cleanup $?' EXIT
 trap 'forward_signal INT' INT
 trap 'forward_signal TERM' TERM
 trap 'forward_signal HUP' HUP
+
+azure_cost_preflight
 
 if proxy_session_acquire "${session_id}"; then
   session_acquired=1
