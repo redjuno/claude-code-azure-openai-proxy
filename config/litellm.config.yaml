@@ -27,6 +27,15 @@ model_list:
     model_info:
       base_model: azure/gpt-5
 
+  - model_name: __CLAUDE_CODE_HAIKU_ALIAS__
+    litellm_params:
+      model: azure/responses/__AZURE_DEPLOYMENT_HAIKU__
+      api_key: os.environ/AZURE_API_KEY
+      api_base: os.environ/AZURE_API_BASE
+      api_version: os.environ/AZURE_API_VERSION
+    model_info:
+      base_model: azure/gpt-5
+
 litellm_settings:
   drop_params: true
   set_verbose: false

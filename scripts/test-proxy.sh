@@ -7,7 +7,7 @@ BASE_URL="http://${LITELLM_HOST}:${LITELLM_PORT}"
 
 printf 'Testing Anthropic-compatible endpoint: %s/v1/messages\n' "${BASE_URL}"
 
-for model_alias in "${CLAUDE_CODE_OPUS_ALIAS}" "${CLAUDE_CODE_FABLE_ALIAS}"; do
+for model_alias in "${CLAUDE_CODE_OPUS_ALIAS}" "${CLAUDE_CODE_FABLE_ALIAS}" "${CLAUDE_CODE_HAIKU_ALIAS}"; do
   printf '\n-- %s\n' "${model_alias}"
   curl -sS "${BASE_URL}/v1/messages" \
     -H "Authorization: Bearer ${LITELLM_MASTER_KEY}" \

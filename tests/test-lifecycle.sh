@@ -28,11 +28,13 @@ AZURE_API_BASE=https://example.test
 AZURE_API_VERSION=2025-03-01-preview
 AZURE_DEPLOYMENT_OPUS=test-opus-deployment
 AZURE_DEPLOYMENT_FABLE=test-fable-deployment
+AZURE_DEPLOYMENT_HAIKU=test-haiku-deployment
 LITELLM_MASTER_KEY=test-master-key
 LITELLM_HOST=127.0.0.1
 LITELLM_PORT=${PORT}
 CLAUDE_CODE_OPUS_ALIAS=test-model
 CLAUDE_CODE_FABLE_ALIAS=test-fable
+CLAUDE_CODE_HAIKU_ALIAS=test-haiku
 EOF
 
 cat > "${BIN_DIR}/claude" <<'EOF'

@@ -42,9 +42,10 @@ AZURE_API_KEY=여기에_Azure_OpenAI_API_Key_입력
 AZURE_API_BASE=https://your-resource-name.openai.azure.com
 AZURE_API_VERSION=2025-03-01-preview
 
-# Claude 티어별 Azure 배포 (opus=Sol, fable=Astra)
+# Claude 티어별 Azure 배포 (opus=Sol, fable=Astra, haiku=Luna)
 AZURE_DEPLOYMENT_OPUS=your-gpt-56-sol-deployment-name
 AZURE_DEPLOYMENT_FABLE=your-gpt-6-astra-deployment-name
+AZURE_DEPLOYMENT_HAIKU=your-gpt-56-luna-deployment-name
 
 LITELLM_HOST=127.0.0.1
 LITELLM_PORT=4000
@@ -53,6 +54,7 @@ LITELLM_MASTER_KEY=sk-local-claude-code-proxy
 # Claude Code에 노출할 티어별 별칭
 CLAUDE_CODE_OPUS_ALIAS=opus
 CLAUDE_CODE_FABLE_ALIAS=fable
+CLAUDE_CODE_HAIKU_ALIAS=haiku
 ```
 
 설정과 자동 수명 주기를 확인한 뒤 `claude-azure` 명령을 설치합니다.
@@ -78,12 +80,12 @@ claude-azure
 주의할 점:
 
 - `AZURE_API_BASE`는 Azure OpenAI 리소스의 endpoint입니다.
-- `AZURE_DEPLOYMENT_OPUS`, `AZURE_DEPLOYMENT_FABLE`은 모델 이름이 아니라 Azure에서 만든 deployment name입니다.
+- `AZURE_DEPLOYMENT_OPUS`, `AZURE_DEPLOYMENT_FABLE`, `AZURE_DEPLOYMENT_HAIKU`는 모델 이름이 아니라 Azure에서 만든 deployment name입니다.
 - `AZURE_API_VERSION`은 `2025-03-01-preview` 이상이어야 합니다.
 - `LITELLM_MASTER_KEY`는 Claude Code와 로컬 LiteLLM 사이에서 사용하는 로컬 인증 키입니다. 실제 Anthropic API 키가 아닙니다.
 - `LITELLM_HOST`는 외부에 노출되지 않도록 기본값 `127.0.0.1` 사용을 권장합니다.
-- `CLAUDE_CODE_OPUS_ALIAS`, `CLAUDE_CODE_FABLE_ALIAS`는 Claude Code에 노출할 이름이며 Azure deployment name과 달라도 됩니다. Claude Code에서 `/model opus`, `/model fable`로 전환합니다.
-- 배포가 두 개뿐이므로 sonnet/haiku 티어도 opus 별칭으로 연결됩니다. 백그라운드 호출이 실패하지 않게 하기 위한 것입니다.
+- `CLAUDE_CODE_OPUS_ALIAS`, `CLAUDE_CODE_FABLE_ALIAS`, `CLAUDE_CODE_HAIKU_ALIAS`는 Claude Code에 노출할 이름이며 Azure deployment name과 달라도 됩니다. Claude Code에서 `/model opus`, `/model fable`, `/model haiku`로 전환합니다.
+- sonnet 티어에 대응하는 배포가 없어서 sonnet은 opus 별칭으로 연결됩니다. 백그라운드 호출이 실패하지 않게 하기 위한 것입니다.
 - `.env`는 Git에 올라가지 않도록 무시 처리되어 있습니다.
 - `make doctor`에서 `env ok`가 나오면 환경 설정 검사가 완료된 것입니다.
 - `claude-azure`를 찾지 못하면 `source ~/.zshrc`를 실행하세요. shim을 직접 사용할 경우에는 `~/.local/bin`이 `PATH`에 포함되어 있어야 합니다.
@@ -231,8 +233,8 @@ ANTHROPIC_AUTH_TOKEN=$LITELLM_MASTER_KEY
 ANTHROPIC_MODEL=opus
 ANTHROPIC_DEFAULT_OPUS_MODEL=opus
 ANTHROPIC_DEFAULT_FABLE_MODEL=fable
+ANTHROPIC_DEFAULT_HAIKU_MODEL=haiku
 ANTHROPIC_DEFAULT_SONNET_MODEL=opus
-ANTHROPIC_DEFAULT_HAIKU_MODEL=opus
 CLAUDE_CODE_SUBAGENT_MODEL=opus
 ```
 
@@ -248,6 +250,9 @@ model_list:
   - model_name: __CLAUDE_CODE_FABLE_ALIAS__
     litellm_params:
       model: azure/responses/__AZURE_DEPLOYMENT_FABLE__
+  - model_name: __CLAUDE_CODE_HAIKU_ALIAS__
+    litellm_params:
+      model: azure/responses/__AZURE_DEPLOYMENT_HAIKU__
 ```
 
 `azure/responses/` 접두사는 요청을 Azure `/v1/responses`로 보냅니다. `/v1/chat/completions`는 reasoning이 켜진 상태의 function tool을 거부하기 때문에(`Function tools with reasoning_effort are not supported`), 이 접두사가 없으면 Claude Code의 도구 호출이 전부 400으로 실패합니다.
@@ -528,6 +533,7 @@ $env:AZURE_API_BASE = "https://your-resource-name.openai.azure.com"
 $env:AZURE_API_VERSION = "2025-03-01-preview"
 $env:AZURE_DEPLOYMENT_OPUS = "your-gpt-56-sol-deployment-name"
 $env:AZURE_DEPLOYMENT_FABLE = "your-gpt-6-astra-deployment-name"
+$env:AZURE_DEPLOYMENT_HAIKU = "your-gpt-56-luna-deployment-name"
 $env:LITELLM_MASTER_KEY = "sk-local-claude-code-proxy"
 
 litellm --config .\config\litellm.config.yaml --host 127.0.0.1 --port 4000
@@ -543,8 +549,8 @@ Remove-Item Env:\ANTHROPIC_API_KEY -ErrorAction SilentlyContinue
 $env:ANTHROPIC_MODEL = "opus"
 $env:ANTHROPIC_DEFAULT_OPUS_MODEL = "opus"
 $env:ANTHROPIC_DEFAULT_FABLE_MODEL = "fable"
+$env:ANTHROPIC_DEFAULT_HAIKU_MODEL = "haiku"
 $env:ANTHROPIC_DEFAULT_SONNET_MODEL = "opus"
-$env:ANTHROPIC_DEFAULT_HAIKU_MODEL = "opus"
 $env:CLAUDE_CODE_SUBAGENT_MODEL = "opus"
 
 $env:CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC = "1"
