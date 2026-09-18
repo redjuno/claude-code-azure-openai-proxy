@@ -33,6 +33,8 @@ AZURE_API_VERSION=2025-03-01-preview
 AZURE_DEPLOYMENT_OPUS=test-opus-deployment
 AZURE_DEPLOYMENT_FABLE=test-fable-deployment
 AZURE_DEPLOYMENT_HAIKU=test-haiku-deployment
+CLAUDE_AZURE_TENANT_ID=ktopen.onmicrosoft.com
+CLAUDE_AZURE_COST_SUBSCRIPTION_ID=3c7b1819-c657-41ca-a22e-b6dc6d34fd98
 LITELLM_MASTER_KEY=test-master-key
 LITELLM_HOST=127.0.0.1
 LITELLM_PORT=${PORT}
@@ -67,7 +69,11 @@ case "$1 $2" in
   'rest --method')
     exit "${MOCK_AZ_SUBSCRIPTION_ACCESS_EXIT:-0}"
     ;;
-  'login ')
+  'login --tenant')
+    if [[ -n "${MOCK_AZ_LOGIN_STDIN:-}" ]]; then
+      IFS= read -r login_input || login_input=""
+      printf '%s\n' "${login_input}" > "${MOCK_AZ_LOGIN_STDIN}"
+    fi
     sleep "${MOCK_AZ_LOGIN_SLEEP:-0}"
     status="${MOCK_AZ_LOGIN_EXIT:-0}"
     if [[ "${status}" == 0 && -n "${MOCK_AZ_LOGIN_MARKER:-}" ]]; then
@@ -100,7 +106,9 @@ export MOCK_PROXY_STARTS="${STARTS_FILE}"
 export MOCK_CLAUDE_RUNS="${CLAUDE_RUNS_FILE}"
 export MOCK_AZ_RUNS="${AZ_RUNS_FILE}"
 export MOCK_COST_REFRESHES="${COST_REFRESHES_FILE}"
-export CLAUDE_AZURE_COST_REFRESH_COMMAND="${BIN_DIR}/azure-cost-refresh"
+export CLAUDE_AZURE_COST_REFRESH_SCRIPT="${BIN_DIR}/azure-cost-refresh"
+export CLAUDE_AZURE_LOGIN_STDIN="${TEST_DIR}/login-stdin"
+printf '%s\n' 'tenant-login-input' > "${CLAUDE_AZURE_LOGIN_STDIN}"
 
 fail() {
   printf 'FAIL: %s\n' "$*" >&2
@@ -154,6 +162,15 @@ grep -Fx 'UV_NATIVE_TLS=true' "${PROXY_ENV_FILE}" >/dev/null || fail "uv native 
 grep -Fx 'public-ca' "${PROXY_ENV_FILE}" >/dev/null || fail "system CA was not passed to LiteLLM"
 grep -Fx 'vpn-ca' "${PROXY_ENV_FILE}" >/dev/null || fail "additional CA was not passed to LiteLLM"
 
+printf 'Test: missing cost HUD configuration skips Azure preflight\n'
+NO_COST_ENV_FILE="${TEST_DIR}/no-cost.env"
+grep -v '^CLAUDE_AZURE_' "${ENV_FILE}" > "${NO_COST_ENV_FILE}"
+: > "${AZ_RUNS_FILE}"
+: > "${CLAUDE_RUNS_FILE}"
+CLAUDE_AZURE_ENV_FILE="${NO_COST_ENV_FILE}" "${ROOT_DIR}/scripts/claude-via-azure-openai.sh" no-cost-config
+[[ ! -s "${AZ_RUNS_FILE}" ]] || fail "Azure preflight ran without tenant/subscription configuration"
+grep -F '|no-cost-config' "${CLAUDE_RUNS_FILE}" >/dev/null || fail "Claude did not run without cost HUD configuration"
+
 printf 'Test: authenticated Azure CLI skips login and refreshes cost\n'
 : > "${AZ_RUNS_FILE}"
 : > "${COST_REFRESHES_FILE}"
@@ -180,22 +197,26 @@ printf 'Test: expired Azure CLI session logs in before selecting subscription\n'
 : > "${AZ_RUNS_FILE}"
 MOCK_AZ_LOGIN_MARKER="${TEST_DIR}/login-marker" MOCK_AZ_ACCESS_TOKEN_EXIT=1 \
   "${ROOT_DIR}/scripts/claude-via-azure-openai.sh" login-required
-grep -Fx 'login' "${AZ_RUNS_FILE}" >/dev/null || fail "az login did not run for an expired session"
-expected_login_sequence=$'account get-access-token\nlogin\nrest --method get --url https://management.azure.com/subscriptions/3c7b1819-c657-41ca-a22e-b6dc6d34fd98?api-version=2022-12-01'
+grep -Fx 'login --tenant ktopen.onmicrosoft.com' "${AZ_RUNS_FILE}" >/dev/null || fail "tenant-scoped az login did not run for an expired session"
+expected_login_sequence=$'account get-access-token\nlogin --tenant ktopen.onmicrosoft.com\nrest --method get --url https://management.azure.com/subscriptions/3c7b1819-c657-41ca-a22e-b6dc6d34fd98?api-version=2022-12-01'
 [[ "$(command cat "${AZ_RUNS_FILE}")" == "${expected_login_sequence}" ]] || fail "unexpected Azure login sequence"
 
-printf 'Test: termination during Azure login stops the launcher\n'
+printf 'Test: tenant login keeps terminal input attached\n'
+login_stdin_file="${TEST_DIR}/login-stdin-read"
 : > "${CLAUDE_RUNS_FILE}"
-MOCK_AZ_ACCESS_TOKEN_EXIT=1 MOCK_AZ_LOGIN_SLEEP=5 "${ROOT_DIR}/scripts/claude-via-azure-openai.sh" terminated >"${TEST_DIR}/terminate.log" 2>&1 &
+MOCK_AZ_LOGIN_STDIN="${login_stdin_file}" MOCK_AZ_ACCESS_TOKEN_EXIT=1 MOCK_AZ_LOGIN_EXIT=1 \
+  "${ROOT_DIR}/scripts/claude-via-azure-openai.sh" login-stdin
+grep -Fx 'tenant-login-input' "${login_stdin_file}" >/dev/null || fail "az login could not read terminal input"
+grep -F '|login-stdin' "${CLAUDE_RUNS_FILE}" >/dev/null || fail "Claude did not run after canceled Azure login"
+
+printf 'Test: canceling optional Azure login still launches Claude\n'
+: > "${CLAUDE_RUNS_FILE}"
+MOCK_AZ_ACCESS_TOKEN_EXIT=1 MOCK_AZ_LOGIN_SLEEP=5 "${ROOT_DIR}/scripts/claude-via-azure-openai.sh" login-canceled >"${TEST_DIR}/login-canceled.log" 2>&1 &
 launcher_pid=$!
 sleep 0.2
 kill -TERM "${launcher_pid}"
-set +e
 wait "${launcher_pid}"
-status=$?
-set -e
-[[ "${status}" == 143 ]] || fail "expected terminated launcher exit 143, got ${status}"
-[[ ! -s "${CLAUDE_RUNS_FILE}" ]] || fail "Claude launched after preflight termination"
+grep -F '|login-canceled' "${CLAUDE_RUNS_FILE}" >/dev/null || fail "Claude did not run after optional Azure login was canceled"
 
 printf 'Test: hanging Azure auth check does not block Claude\n'
 : > "${CLAUDE_RUNS_FILE}"

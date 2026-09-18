@@ -42,6 +42,10 @@ AZURE_API_KEY=여기에_Azure_OpenAI_API_Key_입력
 AZURE_API_BASE=https://your-resource-name.openai.azure.com
 AZURE_API_VERSION=2025-03-01-preview
 
+# Azure Cost HUD 자동 로그인/갱신을 쓸 때만 설정
+# CLAUDE_AZURE_TENANT_ID=your-tenant.onmicrosoft.com
+# CLAUDE_AZURE_COST_SUBSCRIPTION_ID=your-subscription-id
+
 # Claude 티어별 Azure 배포 (opus=Sol, fable=Astra, haiku=Luna)
 AZURE_DEPLOYMENT_OPUS=your-gpt-56-sol-deployment-name
 AZURE_DEPLOYMENT_FABLE=your-gpt-6-astra-deployment-name
@@ -84,6 +88,9 @@ claude-azure
 - `AZURE_API_VERSION`은 `2025-03-01-preview` 이상이어야 합니다.
 - `LITELLM_MASTER_KEY`는 Claude Code와 로컬 LiteLLM 사이에서 사용하는 로컬 인증 키입니다. 실제 Anthropic API 키가 아닙니다.
 - `LITELLM_HOST`는 외부에 노출되지 않도록 기본값 `127.0.0.1` 사용을 권장합니다.
+- Azure Cost HUD preflight는 `CLAUDE_AZURE_TENANT_ID`와 `CLAUDE_AZURE_COST_SUBSCRIPTION_ID`를 둘 다 설정할 때만 활성화됩니다.
+- 인증이 만료되면 `az login --tenant "$CLAUDE_AZURE_TENANT_ID"`가 실행됩니다. 로그인 취소, RBAC 오류, 비용 갱신 실패가 있어도 Claude Code는 계속 시작합니다.
+- 비대화형 Azure 검사는 기본 5초 제한입니다. 필요하면 `CLAUDE_AZURE_PREFLIGHT_TIMEOUT`을 조정하고, 기본 helper 대신 실행 파일을 쓰려면 `CLAUDE_AZURE_COST_REFRESH_SCRIPT`에 경로를 지정합니다.
 - `CLAUDE_CODE_OPUS_ALIAS`, `CLAUDE_CODE_FABLE_ALIAS`, `CLAUDE_CODE_HAIKU_ALIAS`는 Claude Code에 노출할 이름이며 Azure deployment name과 달라도 됩니다. Claude Code에서 `/model opus`, `/model fable`, `/model haiku`로 전환합니다.
 - sonnet 티어에 대응하는 배포가 없어서 sonnet은 opus 별칭으로 연결됩니다. 백그라운드 호출이 실패하지 않게 하기 위한 것입니다.
 - `.env`는 Git에 올라가지 않도록 무시 처리되어 있습니다.
@@ -130,11 +137,12 @@ claude-azure
 
 `claude-azure`는 다음 순서로 동작합니다.
 
-1. 이 저장소의 `.env`를 읽고 LiteLLM 상태를 확인합니다.
-2. 프록시가 없으면 `.claude-runtime/`에 로그와 PID 정보를 두고 백그라운드로 시작합니다.
-3. 프록시가 준비된 뒤 현재 디렉터리에서 Claude Code를 실행합니다.
-4. 동시에 여러 `claude-azure` 세션이 있으면 프록시 하나를 공유합니다.
-5. 마지막 세션이 끝나면 이 launcher가 시작한 프록시만 자동 종료합니다.
+1. 이 저장소의 `.env`를 읽습니다.
+2. Cost HUD tenant/subscription이 설정되어 있으면 Azure 인증과 구독 접근을 확인하고, 필요할 때 tenant-scoped 로그인을 실행한 뒤 비용 갱신을 백그라운드로 시작합니다.
+3. LiteLLM 상태를 확인하고, 프록시가 없으면 `.claude-runtime/`에 로그와 PID 정보를 두고 백그라운드로 시작합니다.
+4. 프록시가 준비된 뒤 현재 디렉터리에서 Claude Code를 실행합니다.
+5. 동시에 여러 `claude-azure` 세션이 있으면 프록시 하나를 공유합니다.
+6. 마지막 세션이 끝나면 이 launcher가 시작한 프록시만 자동 종료합니다.
 
 사용자가 `make proxy` 등으로 미리 실행한 호환 프록시는 재사용하지만 `claude-azure`가 소유하지 않으므로 자동으로 종료하지 않습니다. 같은 포트에 인증되지 않은 다른 서비스가 있으면 해당 프로세스를 종료하지 않고 시작 오류를 표시합니다.
 

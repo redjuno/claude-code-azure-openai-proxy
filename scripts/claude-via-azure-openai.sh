@@ -54,38 +54,62 @@ try:
     raise SystemExit(process.wait(timeout=float(sys.argv[1])))
 except subprocess.TimeoutExpired:
     terminate(124)
-' "${timeout_seconds}" "$@"
+' "${timeout_seconds}" "$@" &
+  preflight_pid=$!
+  local status
+  set +e
+  wait "${preflight_pid}"
+  status=$?
+  set -e
+  preflight_pid=""
+  return "${status}"
+}
+
+run_preflight_command() {
+  "$@" <&0 &
+  preflight_pid=$!
+  local status
+  set +e
+  wait "${preflight_pid}"
+  status=$?
+  set -e
+  preflight_pid=""
+  return "${status}"
 }
 
 azure_cost_preflight() {
-  local subscription_id="${CLAUDE_AZURE_COST_SUBSCRIPTION_ID:-3c7b1819-c657-41ca-a22e-b6dc6d34fd98}"
-  local refresh_script="${HOME:-}/.claude/azure_cost_statusline.py"
+  local tenant_id="${CLAUDE_AZURE_TENANT_ID:-}"
+  local subscription_id="${CLAUDE_AZURE_COST_SUBSCRIPTION_ID:-}"
+  local refresh_script="${CLAUDE_AZURE_COST_REFRESH_SCRIPT:-${HOME:-}/.claude/azure_cost_statusline.py}"
+  local login_stdin="${CLAUDE_AZURE_LOGIN_STDIN:-/dev/tty}"
   local timeout_seconds="${CLAUDE_AZURE_PREFLIGHT_TIMEOUT:-5}"
 
+  if [[ -z "${tenant_id}" || -z "${subscription_id}" ]]; then
+    return
+  fi
   if ! command -v az >/dev/null 2>&1; then
     printf 'Warning: Azure CLI not found; cost HUD refresh skipped.\n' >&2
     return
   fi
 
   local auth_error
-  if ! auth_error="$(run_with_timeout "${timeout_seconds}" az account get-access-token 2>&1 >/dev/null)"; then
-    if grep -Eqi 'az login|interactive authentication|login required' <<<"${auth_error}"; then
+  auth_error="$(mktemp)"
+  if ! run_with_timeout "${timeout_seconds}" az account get-access-token \
+    >/dev/null 2>"${auth_error}"; then
+    if grep -Eqi 'az login|interactive authentication|login required' "${auth_error}"; then
+      rm -f "${auth_error}"
       printf 'Azure CLI login required for cost HUD.\n'
-      az login &
-      preflight_pid=$!
-      set +e
-      wait "${preflight_pid}"
-      login_status=$?
-      set -e
-      preflight_pid=""
-      if (( login_status != 0 )); then
+      if ! run_preflight_command az login --tenant "${tenant_id}" <"${login_stdin}"; then
         printf 'Warning: Azure login failed; continuing without cost refresh.\n' >&2
         return
       fi
     else
+      rm -f "${auth_error}"
       printf 'Warning: Azure authentication check failed; continuing without cost refresh.\n' >&2
       return
     fi
+  else
+    rm -f "${auth_error}"
   fi
 
   if ! run_with_timeout "${timeout_seconds}" az rest --method get \
@@ -94,10 +118,8 @@ azure_cost_preflight() {
     return
   fi
 
-  if [[ -n "${CLAUDE_AZURE_COST_REFRESH_COMMAND:-}" ]]; then
-    nohup "${CLAUDE_AZURE_COST_REFRESH_COMMAND}" --refresh >/dev/null 2>&1 &
-  elif [[ -f "${refresh_script}" ]]; then
-    nohup python3 "${refresh_script}" --refresh >/dev/null 2>&1 &
+  if [[ -x "${refresh_script}" ]]; then
+    nohup "${refresh_script}" --refresh >/dev/null 2>&1 &
   fi
 }
 
@@ -116,17 +138,6 @@ cleanup() {
   cleanup_started=1
   trap - EXIT INT TERM HUP
 
-  if [[ -n "${preflight_pid}" ]] && process_is_alive "${preflight_pid}"; then
-    kill -TERM "${preflight_pid}" 2>/dev/null || true
-    for _ in {1..20}; do
-      process_is_alive "${preflight_pid}" || break
-      sleep 0.05
-    done
-    if process_is_alive "${preflight_pid}"; then
-      kill -KILL "${preflight_pid}" 2>/dev/null || true
-    fi
-    wait "${preflight_pid}" 2>/dev/null || true
-  fi
   if [[ -n "${claude_pid}" ]] && process_is_alive "${claude_pid}"; then
     kill -TERM "${claude_pid}" 2>/dev/null || true
     wait "${claude_pid}" 2>/dev/null || true
@@ -143,16 +154,14 @@ forward_signal() {
 
   if [[ -n "${preflight_pid}" ]] && process_is_alive "${preflight_pid}"; then
     kill -"${signal}" "${preflight_pid}" 2>/dev/null || true
-  elif [[ -n "${claude_pid}" ]] && process_is_alive "${claude_pid}"; then
-    kill -"${signal}" "${claude_pid}" 2>/dev/null || true
     return
   fi
-
-  case "${signal}" in
-    HUP) exit 129 ;;
-    INT) exit 130 ;;
-    TERM) exit 143 ;;
-  esac
+  if [[ -n "${claude_pid}" ]]; then
+    if process_is_alive "${claude_pid}"; then
+      kill -"${signal}" "${claude_pid}" 2>/dev/null || true
+    fi
+    return
+  fi
 }
 
 trap 'cleanup $?' EXIT
