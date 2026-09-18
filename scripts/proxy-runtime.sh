@@ -29,7 +29,7 @@ process_started_at() {
   if [[ -r "${stat_file}" ]]; then
     command cut -d ' ' -f 22 "${stat_file}" 2>/dev/null || true
   else
-    ps -p "${pid}" -o lstart= 2>/dev/null || true
+    ps -p "${pid}" -o lstart= 2>/dev/null | xargs 2>/dev/null || true
   fi
 }
 

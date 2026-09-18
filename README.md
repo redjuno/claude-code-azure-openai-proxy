@@ -5,20 +5,8 @@
 Claude Code는 OpenAI/Azure OpenAI API 키를 직접 넣는 방식을 공식 지원하지 않습니다. 그래서 중간에 LiteLLM 프록시를 띄우고, Claude Code가 이 프록시를 Anthropic API처럼 바라보게 만듭니다.
 
 ```text
-Claude Code -> LiteLLM 프록시 -> Azure OpenAI 배포 (opus=Sol, sonnet=Terra, haiku=Luna)
+Claude Code -> LiteLLM 프록시 -> Azure OpenAI GPT-5.5 배포
 ```
-
-## 모델 티어 매핑
-
-Claude Code의 세 티어(opus/sonnet/haiku)를 서로 다른 Azure 배포로 라우팅합니다. `/model` 명령으로 티어를 바꾸면 아래 배포로 연결됩니다.
-
-| Claude 티어 | Azure 배포 (예) | 모델 | 특징 | 가격(입력/출력, 백만 토큰) |
-| --- | --- | --- | --- | --- |
-| opus | `gpt-5.6-sol` | **Sol** (최상위 플래그십) | 복잡한 코딩, 사이버 보안, 과학 연구, 장기 추론 등 최고 수준 지능이 필요한 고난도 작업 | $5 / $30 |
-| sonnet | `gpt-5.6-terra` | **Terra** (성능·비용 균형형) | 이전 세대(GPT-5.5) 수준 성능을 절반 가격에 제공, 일반 업무 자동화·문서 분석에 무난 | $2.50 / $15 |
-| haiku | `gpt-5.6-luna` | **Luna** (속도·비용 최적화형) | 가장 빠르고 저렴, 대량 데이터 분류·단순 정보 추출 등 속도·가성비 우선 작업 | $1 / $6 |
-
-각 매핑은 `.env`의 `AZURE_DEPLOYMENT_OPUS`/`AZURE_DEPLOYMENT_SONNET`/`AZURE_DEPLOYMENT_HAIKU`(Azure 배포명)와 `CLAUDE_CODE_OPUS_ALIAS`/`CLAUDE_CODE_SONNET_ALIAS`/`CLAUDE_CODE_HAIKU_ALIAS`(Claude Code에 노출할 별칭)로 설정합니다.
 
 ## 빠른 시작: clone부터 첫 실행까지
 
@@ -28,7 +16,7 @@ Linux/macOS 기준으로 아래 프로그램과 Azure OpenAI 배포가 필요합
 - `uvx`
 - `curl`
 - `make`
-- Azure OpenAI GPT-5.6-sol 배포
+- Azure OpenAI GPT-5.5 배포
 
 설치 여부를 확인합니다.
 
@@ -54,9 +42,13 @@ AZURE_API_KEY=여기에_Azure_OpenAI_API_Key_입력
 AZURE_API_BASE=https://your-resource-name.openai.azure.com
 AZURE_API_VERSION=2025-03-01-preview
 
-# Claude 티어별 Azure 배포 (opus=Sol, sonnet=Terra, haiku=Luna)
+# Azure Cost HUD 자동 로그인/갱신을 쓸 때만 설정
+# CLAUDE_AZURE_TENANT_ID=your-tenant.onmicrosoft.com
+# CLAUDE_AZURE_COST_SUBSCRIPTION_ID=your-subscription-id
+
+# Claude 티어별 Azure 배포 (opus=Sol, fable=Astra, haiku=Luna)
 AZURE_DEPLOYMENT_OPUS=your-gpt-56-sol-deployment-name
-AZURE_DEPLOYMENT_SONNET=your-gpt-56-terra-deployment-name
+AZURE_DEPLOYMENT_FABLE=your-gpt-6-astra-deployment-name
 AZURE_DEPLOYMENT_HAIKU=your-gpt-56-luna-deployment-name
 
 LITELLM_HOST=127.0.0.1
@@ -65,7 +57,7 @@ LITELLM_MASTER_KEY=sk-local-claude-code-proxy
 
 # Claude Code에 노출할 티어별 별칭
 CLAUDE_CODE_OPUS_ALIAS=opus
-CLAUDE_CODE_SONNET_ALIAS=sonnet
+CLAUDE_CODE_FABLE_ALIAS=fable
 CLAUDE_CODE_HAIKU_ALIAS=haiku
 ```
 
@@ -92,11 +84,15 @@ claude-azure
 주의할 점:
 
 - `AZURE_API_BASE`는 Azure OpenAI 리소스의 endpoint입니다.
-- `AZURE_DEPLOYMENT_OPUS`/`AZURE_DEPLOYMENT_SONNET`/`AZURE_DEPLOYMENT_HAIKU`는 모델 이름이 아니라 Azure에서 만든 deployment name이며, Claude의 opus/sonnet/haiku 티어에 각각 매핑됩니다.
+- `AZURE_DEPLOYMENT_OPUS`, `AZURE_DEPLOYMENT_FABLE`, `AZURE_DEPLOYMENT_HAIKU`는 모델 이름이 아니라 Azure에서 만든 deployment name입니다.
 - `AZURE_API_VERSION`은 `2025-03-01-preview` 이상이어야 합니다.
 - `LITELLM_MASTER_KEY`는 Claude Code와 로컬 LiteLLM 사이에서 사용하는 로컬 인증 키입니다. 실제 Anthropic API 키가 아닙니다.
 - `LITELLM_HOST`는 외부에 노출되지 않도록 기본값 `127.0.0.1` 사용을 권장합니다.
-- `CLAUDE_CODE_OPUS_ALIAS`/`CLAUDE_CODE_SONNET_ALIAS`/`CLAUDE_CODE_HAIKU_ALIAS`는 Claude Code에 노출할 티어별 이름이며 Azure deployment name과 달라도 됩니다.
+- Azure Cost HUD preflight는 `CLAUDE_AZURE_TENANT_ID`와 `CLAUDE_AZURE_COST_SUBSCRIPTION_ID`를 둘 다 설정할 때만 활성화됩니다.
+- 인증이 만료되면 `az login --tenant "$CLAUDE_AZURE_TENANT_ID"`가 실행됩니다. 로그인 취소, RBAC 오류, 비용 갱신 실패가 있어도 Claude Code는 계속 시작합니다.
+- 비대화형 Azure 검사는 기본 5초 제한입니다. 필요하면 `CLAUDE_AZURE_PREFLIGHT_TIMEOUT`을 조정하고, 기본 helper 대신 실행 파일을 쓰려면 `CLAUDE_AZURE_COST_REFRESH_SCRIPT`에 경로를 지정합니다.
+- `CLAUDE_CODE_OPUS_ALIAS`, `CLAUDE_CODE_FABLE_ALIAS`, `CLAUDE_CODE_HAIKU_ALIAS`는 Claude Code에 노출할 이름이며 Azure deployment name과 달라도 됩니다. Claude Code에서 `/model opus`, `/model fable`, `/model haiku`로 전환합니다.
+- sonnet 티어에 대응하는 배포가 없어서 sonnet은 opus 별칭으로 연결됩니다. 백그라운드 호출이 실패하지 않게 하기 위한 것입니다.
 - `.env`는 Git에 올라가지 않도록 무시 처리되어 있습니다.
 - `make doctor`에서 `env ok`가 나오면 환경 설정 검사가 완료된 것입니다.
 - `claude-azure`를 찾지 못하면 `source ~/.zshrc`를 실행하세요. shim을 직접 사용할 경우에는 `~/.local/bin`이 `PATH`에 포함되어 있어야 합니다.
@@ -141,11 +137,12 @@ claude-azure
 
 `claude-azure`는 다음 순서로 동작합니다.
 
-1. 이 저장소의 `.env`를 읽고 LiteLLM 상태를 확인합니다.
-2. 프록시가 없으면 `.claude-runtime/`에 로그와 PID 정보를 두고 백그라운드로 시작합니다.
-3. 프록시가 준비된 뒤 현재 디렉터리에서 Claude Code를 실행합니다.
-4. 동시에 여러 `claude-azure` 세션이 있으면 프록시 하나를 공유합니다.
-5. 마지막 세션이 끝나면 이 launcher가 시작한 프록시만 자동 종료합니다.
+1. 이 저장소의 `.env`를 읽습니다.
+2. Cost HUD tenant/subscription이 설정되어 있으면 Azure 인증과 구독 접근을 확인하고, 필요할 때 tenant-scoped 로그인을 실행한 뒤 비용 갱신을 백그라운드로 시작합니다.
+3. LiteLLM 상태를 확인하고, 프록시가 없으면 `.claude-runtime/`에 로그와 PID 정보를 두고 백그라운드로 시작합니다.
+4. 프록시가 준비된 뒤 현재 디렉터리에서 Claude Code를 실행합니다.
+5. 동시에 여러 `claude-azure` 세션이 있으면 프록시 하나를 공유합니다.
+6. 마지막 세션이 끝나면 이 launcher가 시작한 프록시만 자동 종료합니다.
 
 사용자가 `make proxy` 등으로 미리 실행한 호환 프록시는 재사용하지만 `claude-azure`가 소유하지 않으므로 자동으로 종료하지 않습니다. 같은 포트에 인증되지 않은 다른 서비스가 있으면 해당 프로세스를 종료하지 않고 시작 오류를 표시합니다.
 
@@ -175,7 +172,7 @@ make test
 
 ```json
 {
-  "model": "gpt-5.6-sol",
+  "model": "opus",
   "content": [
     {
       "type": "text",
@@ -242,9 +239,11 @@ make stop-force
 ANTHROPIC_BASE_URL=http://127.0.0.1:4000
 ANTHROPIC_AUTH_TOKEN=$LITELLM_MASTER_KEY
 ANTHROPIC_MODEL=opus
-ANTHROPIC_DEFAULT_SONNET_MODEL=sonnet
+ANTHROPIC_DEFAULT_OPUS_MODEL=opus
+ANTHROPIC_DEFAULT_FABLE_MODEL=fable
 ANTHROPIC_DEFAULT_HAIKU_MODEL=haiku
-CLAUDE_CODE_SUBAGENT_MODEL=sonnet
+ANTHROPIC_DEFAULT_SONNET_MODEL=opus
+CLAUDE_CODE_SUBAGENT_MODEL=opus
 ```
 
 Claude Code 입장에서는 `http://127.0.0.1:4000`에 있는 Anthropic 호환 API를 호출합니다. 실제로는 LiteLLM이 이 요청을 Azure OpenAI 요청으로 변환합니다.
@@ -255,14 +254,18 @@ Claude Code 입장에서는 `http://127.0.0.1:4000`에 있는 Anthropic 호환 A
 model_list:
   - model_name: __CLAUDE_CODE_OPUS_ALIAS__
     litellm_params:
-      model: azure/__AZURE_DEPLOYMENT_OPUS__
-  - model_name: __CLAUDE_CODE_SONNET_ALIAS__
+      model: azure/responses/__AZURE_DEPLOYMENT_OPUS__
+  - model_name: __CLAUDE_CODE_FABLE_ALIAS__
     litellm_params:
-      model: azure/__AZURE_DEPLOYMENT_SONNET__
+      model: azure/responses/__AZURE_DEPLOYMENT_FABLE__
   - model_name: __CLAUDE_CODE_HAIKU_ALIAS__
     litellm_params:
-      model: azure/__AZURE_DEPLOYMENT_HAIKU__
+      model: azure/responses/__AZURE_DEPLOYMENT_HAIKU__
 ```
+
+`azure/responses/` 접두사는 요청을 Azure `/v1/responses`로 보냅니다. `/v1/chat/completions`는 reasoning이 켜진 상태의 function tool을 거부하기 때문에(`Function tools with reasoning_effort are not supported`), 이 접두사가 없으면 Claude Code의 도구 호출이 전부 400으로 실패합니다.
+
+`model_info.base_model`은 `azure/gpt-5`로 고정되어 있습니다. LiteLLM이 모르는 base_model이면 `max_completion_tokens` 대신 `max_tokens`를 보내서 Azure가 요청을 거부합니다.
 
 `make proxy`를 실행하면 `.env` 값을 읽어서 `.generated/litellm.config.yaml`을 만들고 LiteLLM을 실행합니다.
 
@@ -354,12 +357,12 @@ The API deployment for this resource does not exist
 
 해결:
 
-`.env`의 `AZURE_DEPLOYMENT_OPUS`/`AZURE_DEPLOYMENT_SONNET`/`AZURE_DEPLOYMENT_HAIKU`가 Azure OpenAI Studio의 deployment name과 정확히 같은지 확인하세요.
+`config/litellm.config.yaml`의 `model: azure/<deployment>` 값이 Azure OpenAI Studio의 deployment name과 정확히 같은지 확인하세요.
 
-```bash
-AZURE_DEPLOYMENT_OPUS=your-gpt-56-sol-deployment-name
-AZURE_DEPLOYMENT_SONNET=your-gpt-56-terra-deployment-name
-AZURE_DEPLOYMENT_HAIKU=your-gpt-56-luna-deployment-name
+```yaml
+  - model_name: opus
+    litellm_params:
+      model: azure/gpt-sol
 ```
 
 ## Windows 제한망/폐쇄망 배포 가이드
@@ -381,7 +384,7 @@ Windows 개발 PC
   -> Claude Code
   -> 로컬 LiteLLM 프록시 또는 내부 공용 LiteLLM 프록시
   -> Azure OpenAI Private Endpoint / 내부 LLM Gateway
-  -> Azure OpenAI GPT-5.6-sol 배포
+  -> Azure OpenAI GPT-5.5 배포
 ```
 
 ### 케이스 A: 개발자 PC마다 로컬 프록시 실행
@@ -428,8 +431,8 @@ PowerShell 2: Claude Code 실행
 $env:ANTHROPIC_BASE_URL = "https://llm-gateway.internal.example.com"
 $env:ANTHROPIC_AUTH_TOKEN = "내부_프록시_토큰"
 $env:ANTHROPIC_MODEL = "opus"
-$env:ANTHROPIC_DEFAULT_SONNET_MODEL = "sonnet"
-$env:ANTHROPIC_DEFAULT_HAIKU_MODEL = "haiku"
+$env:ANTHROPIC_DEFAULT_OPUS_MODEL = "opus"
+$env:ANTHROPIC_DEFAULT_FABLE_MODEL = "fable"
 claude
 ```
 
@@ -537,7 +540,7 @@ $env:AZURE_API_KEY = "여기에_Azure_OpenAI_API_Key_입력"
 $env:AZURE_API_BASE = "https://your-resource-name.openai.azure.com"
 $env:AZURE_API_VERSION = "2025-03-01-preview"
 $env:AZURE_DEPLOYMENT_OPUS = "your-gpt-56-sol-deployment-name"
-$env:AZURE_DEPLOYMENT_SONNET = "your-gpt-56-terra-deployment-name"
+$env:AZURE_DEPLOYMENT_FABLE = "your-gpt-6-astra-deployment-name"
 $env:AZURE_DEPLOYMENT_HAIKU = "your-gpt-56-luna-deployment-name"
 $env:LITELLM_MASTER_KEY = "sk-local-claude-code-proxy"
 
@@ -552,9 +555,11 @@ $env:ANTHROPIC_AUTH_TOKEN = "sk-local-claude-code-proxy"
 Remove-Item Env:\ANTHROPIC_API_KEY -ErrorAction SilentlyContinue
 
 $env:ANTHROPIC_MODEL = "opus"
-$env:ANTHROPIC_DEFAULT_SONNET_MODEL = "sonnet"
+$env:ANTHROPIC_DEFAULT_OPUS_MODEL = "opus"
+$env:ANTHROPIC_DEFAULT_FABLE_MODEL = "fable"
 $env:ANTHROPIC_DEFAULT_HAIKU_MODEL = "haiku"
-$env:CLAUDE_CODE_SUBAGENT_MODEL = "sonnet"
+$env:ANTHROPIC_DEFAULT_SONNET_MODEL = "opus"
+$env:CLAUDE_CODE_SUBAGENT_MODEL = "opus"
 
 $env:CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC = "1"
 $env:DISABLE_TELEMETRY = "1"
@@ -582,7 +587,7 @@ curl.exe http://127.0.0.1:4000/v1/messages `
   -H "x-api-key: sk-local-claude-code-proxy" `
   -H "anthropic-version: 2023-06-01" `
   -H "content-type: application/json" `
-  -d "{ `"model`": `"gpt-5.6-sol`", `"max_tokens`": 64, `"messages`": [{ `"role`": `"user`", `"content`": `"Reply with one short sentence confirming the proxy works.`" }] }"
+  -d "{ `"model`": `"opus`", `"max_tokens`": 64, `"messages`": [{ `"role`": `"user`", `"content`": `"Reply with one short sentence confirming the proxy works.`" }] }"
 ```
 
 3. PowerShell 2에서 Claude Code 실행
