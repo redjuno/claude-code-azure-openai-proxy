@@ -11,6 +11,8 @@ CLAUDE_RUNS_FILE="${TEST_DIR}/claude-runs"
 AZ_RUNS_FILE="${TEST_DIR}/az-runs"
 COST_REFRESHES_FILE="${TEST_DIR}/cost-refreshes"
 PORT="${CLAUDE_AZURE_TEST_PORT:-$((20000 + RANDOM % 20000))}"
+TEST_TENANT_ID="test-tenant.example"
+TEST_SUBSCRIPTION_ID="00000000-0000-0000-0000-000000000000"
 
 cleanup() {
   if [[ -f "${RUNTIME_DIR}/proxy.pid" ]]; then
@@ -33,8 +35,8 @@ AZURE_API_VERSION=2025-03-01-preview
 AZURE_DEPLOYMENT_OPUS=test-opus-deployment
 AZURE_DEPLOYMENT_FABLE=test-fable-deployment
 AZURE_DEPLOYMENT_HAIKU=test-haiku-deployment
-CLAUDE_AZURE_TENANT_ID=ktopen.onmicrosoft.com
-CLAUDE_AZURE_COST_SUBSCRIPTION_ID=3c7b1819-c657-41ca-a22e-b6dc6d34fd98
+CLAUDE_AZURE_TENANT_ID=${TEST_TENANT_ID}
+CLAUDE_AZURE_COST_SUBSCRIPTION_ID=${TEST_SUBSCRIPTION_ID}
 LITELLM_MASTER_KEY=test-master-key
 LITELLM_HOST=127.0.0.1
 LITELLM_PORT=${PORT}
@@ -176,7 +178,7 @@ printf 'Test: authenticated Azure CLI skips login and refreshes cost\n'
 : > "${COST_REFRESHES_FILE}"
 "${ROOT_DIR}/scripts/claude-via-azure-openai.sh" authenticated
 ! grep -Fx 'login' "${AZ_RUNS_FILE}" >/dev/null || fail "az login ran with a valid session"
-grep -Fx 'rest --method get --url https://management.azure.com/subscriptions/3c7b1819-c657-41ca-a22e-b6dc6d34fd98?api-version=2022-12-01' "${AZ_RUNS_FILE}" >/dev/null || fail "expected subscription access was not validated"
+grep -Fx "rest --method get --url https://management.azure.com/subscriptions/${TEST_SUBSCRIPTION_ID}?api-version=2022-12-01" "${AZ_RUNS_FILE}" >/dev/null || fail "expected subscription access was not validated"
 ! grep -F 'account set' "${AZ_RUNS_FILE}" >/dev/null || fail "launcher changed the global Azure subscription"
 wait_for_file "${COST_REFRESHES_FILE}"
 grep -Fx -- '--refresh' "${COST_REFRESHES_FILE}" >/dev/null || fail "cost refresh was not triggered"
@@ -197,8 +199,10 @@ printf 'Test: expired Azure CLI session logs in before selecting subscription\n'
 : > "${AZ_RUNS_FILE}"
 MOCK_AZ_LOGIN_MARKER="${TEST_DIR}/login-marker" MOCK_AZ_ACCESS_TOKEN_EXIT=1 \
   "${ROOT_DIR}/scripts/claude-via-azure-openai.sh" login-required
-grep -Fx 'login --tenant ktopen.onmicrosoft.com' "${AZ_RUNS_FILE}" >/dev/null || fail "tenant-scoped az login did not run for an expired session"
-expected_login_sequence=$'account get-access-token\nlogin --tenant ktopen.onmicrosoft.com\nrest --method get --url https://management.azure.com/subscriptions/3c7b1819-c657-41ca-a22e-b6dc6d34fd98?api-version=2022-12-01'
+grep -Fx "login --tenant ${TEST_TENANT_ID}" "${AZ_RUNS_FILE}" >/dev/null || fail "tenant-scoped az login did not run for an expired session"
+expected_login_sequence="account get-access-token
+login --tenant ${TEST_TENANT_ID}
+rest --method get --url https://management.azure.com/subscriptions/${TEST_SUBSCRIPTION_ID}?api-version=2022-12-01"
 [[ "$(command cat "${AZ_RUNS_FILE}")" == "${expected_login_sequence}" ]] || fail "unexpected Azure login sequence"
 
 printf 'Test: tenant login keeps terminal input attached\n'
