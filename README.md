@@ -90,7 +90,7 @@ claude-azure
 - `LITELLM_HOST`는 외부에 노출되지 않도록 기본값 `127.0.0.1` 사용을 권장합니다.
 - Azure Cost HUD preflight는 `CLAUDE_AZURE_TENANT_ID`와 `CLAUDE_AZURE_COST_SUBSCRIPTION_ID`를 둘 다 설정할 때만 활성화됩니다.
 - 인증이 만료되면 `az login --tenant "$CLAUDE_AZURE_TENANT_ID"`가 실행됩니다. 로그인 취소, RBAC 오류, 비용 갱신 실패가 있어도 Claude Code는 계속 시작합니다.
-- 비대화형 Azure 검사는 기본 5초 제한입니다. 필요하면 `CLAUDE_AZURE_PREFLIGHT_TIMEOUT`을 조정하고, 기본 helper 대신 실행 파일을 쓰려면 `CLAUDE_AZURE_COST_REFRESH_SCRIPT`에 경로를 지정합니다.
+- 비대화형 Azure 검사는 기본 5초 제한입니다. 필요하면 `CLAUDE_AZURE_PREFLIGHT_TIMEOUT`을 조정하고, 기본 helper 대신 실행 파일을 쓰려면 `CLAUDE_AZURE_COST_REFRESH_SCRIPT`에 **절대 경로**를 지정합니다. `claude-azure`는 작업 중인 프로젝트 디렉토리에서 실행되므로, 상대 경로를 쓰면 그 프로젝트 기준으로 찾다가 조용히 건너뜁니다.
 - HUD가 실제로 비용을 조회하는 대상은 `~/.claude/azure-cost.json`의 `resource_id` 하나입니다. `AZURE_API_BASE`가 가리키는 Azure OpenAI 계정이어야 하며, 옛 값이 남아 있으면 지금 쓰는 배포의 비용이 HUD에 잡히지 않습니다. 실제 계정 식별자가 들어가므로 이 파일은 `.env`와 마찬가지로 저장소에 두지 않습니다(양식은 `config/azure-cost.example.json`).
 ```json
 {
