@@ -66,10 +66,14 @@ def write_cache(value):
 
 def retry_after_seconds(stderr):
     """Seconds Azure asked us to wait, when it said so."""
-    match = re.search(r"(?<!-ms)\bretry-after\s*:\s*(\d+)", stderr or "", re.IGNORECASE)
-    if not match:
-        return None
-    return max(1, min(int(match.group(1)), 900))
+    # Two shapes: the header name (only visible under az --debug) and the
+    # sentence Cost Management actually returns, "Please retry after 15
+    # seconds". Retry-After-Ms is a different unit and must not match either.
+    for pattern in (r"retry-after\s*:\s*(\d+)", r"retry\s+after\s+(\d+)\s*second"):
+        match = re.search(pattern, stderr or "", re.IGNORECASE)
+        if match:
+            return max(1, min(int(match.group(1)), 900))
+    return None
 
 
 def parse_cost(response):
@@ -225,8 +229,22 @@ def load_cache():
     return cache if isinstance(cache, dict) else None
 
 
+def config_changed_since(cache):
+    """True once azure-cost.json is newer than the entry we cached from it."""
+    try:
+        config_mtime = CONFIG_PATH.stat().st_mtime
+        cache_mtime = CACHE_PATH.stat().st_mtime
+    except OSError:
+        return False
+    return config_mtime > cache_mtime
+
+
 def cache_is_stale(cache):
     if not cache:
+        return True
+    if config_changed_since(cache):
+        # Filling in a real resource id must not wait out the six hour retry
+        # the placeholder config just booked.
         return True
     try:
         if "next_retry_at" in cache:
@@ -362,7 +380,10 @@ def refresh():
     if token is None:
         return
     try:
-        config = json.loads(CONFIG_PATH.read_text())
+        try:
+            config = json.loads(CONFIG_PATH.read_text())
+        except FileNotFoundError:
+            config = {}
         resource_id = (config.get("resource_id") or "").rstrip("/") if isinstance(config, dict) else ""
         parts = resource_id.split("/")
         # A truncated id still splits into a subscription scope, which is the

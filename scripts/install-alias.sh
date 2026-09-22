@@ -21,12 +21,25 @@ fi
 
 mkdir -p "${CLAUDE_DIR}"
 
+
+# The cost config names a real subscription and resource, so it is never
+# committed and never overwritten once it exists.
+if [[ ! -f "${COST_CONFIG}" ]]; then
+  cp "${ROOT_DIR}/config/azure-cost.example.json" "${COST_CONFIG}"
+  cost_config_created=1
+else
+  cost_config_created=0
+fi
+
+# Generated before the alias, because whether it succeeds decides whether the
+# alias carries --settings at all. It needs python3 and a writable config dir,
+# and neither failure may cost the user the launcher they asked for.
 # statusLine has to name an absolute path, so the tracked template carries a
 # placeholder and the real file is generated here. The substitution runs through
 # python rather than sed: the path lands inside a JSON string that the shell then
 # executes, so it needs JSON escaping and shell quoting, and sed would also choke
 # on a path containing its delimiter or an unescaped "&".
-python3 - "${ROOT_DIR}/config/azure-settings.json" "${STATUSLINE}" "${AZURE_SETTINGS}" <<'PYTHON'
+if ! python3 - "${ROOT_DIR}/config/azure-settings.json" "${STATUSLINE}" "${AZURE_SETTINGS}" <<'PYTHON'
 import json
 import pathlib
 import shlex
@@ -50,14 +63,9 @@ if not isinstance(settings, dict):
 settings["statusLine"] = {"type": "command", "command": command}
 target.write_text(json.dumps(settings, indent=2) + "\n")
 PYTHON
-
-# The cost config names a real subscription and resource, so it is never
-# committed and never overwritten once it exists.
-if [[ ! -f "${COST_CONFIG}" ]]; then
-  cp "${ROOT_DIR}/config/azure-cost.example.json" "${COST_CONFIG}"
-  cost_config_created=1
-else
-  cost_config_created=0
+then
+  printf 'Warning: could not write %s; the cost HUD statusline was not installed.\n' "${AZURE_SETTINGS}" >&2
+  AZURE_SETTINGS=""
 fi
 
 mkdir -p "$(dirname "${SHELL_RC}")"
@@ -75,7 +83,11 @@ awk -v begin="${MARKER_BEGIN}" -v end="${MARKER_END}" '
   printf '\n%s\n' "${MARKER_BEGIN}"
   # The alias value is re-parsed by the shell when the alias expands, so the
   # escaping has to survive twice: once for each path, once for the whole value.
-  printf 'alias %s=%q\n' "${ALIAS_NAME}" "$(printf '%q --settings %q' "${LAUNCHER}" "${AZURE_SETTINGS}")"
+  if [[ -n "${AZURE_SETTINGS}" ]]; then
+    printf 'alias %s=%q\n' "${ALIAS_NAME}" "$(printf '%q --settings %q' "${LAUNCHER}" "${AZURE_SETTINGS}")"
+  else
+    printf 'alias %s=%q\n' "${ALIAS_NAME}" "${LAUNCHER}"
+  fi
   printf '%s\n' "${MARKER_END}"
 } > "${SHELL_RC}"
 
@@ -84,14 +96,21 @@ rm -f "${tmp_file}"
 mkdir -p "${BIN_DIR}"
 {
   printf '#!/usr/bin/env bash\n'
-  printf 'exec %q --settings %q "$@"\n' "${LAUNCHER}" "${AZURE_SETTINGS}"
+  if [[ -n "${AZURE_SETTINGS}" ]]; then
+    printf 'exec %q --settings %q "$@"\n' "${LAUNCHER}" "${AZURE_SETTINGS}"
+  else
+    printf 'exec %q "$@"\n' "${LAUNCHER}"
+  fi
 } > "${SHIM}"
 chmod +x "${SHIM}"
 
+
 printf 'Installed alias:\n'
 printf '  %s -> %s\n' "${ALIAS_NAME}" "${LAUNCHER}"
-printf '\nInstalled cost HUD statusline:\n'
-printf '  %s -> %s\n' "${AZURE_SETTINGS}" "${STATUSLINE}"
+if [[ -n "${AZURE_SETTINGS}" ]]; then
+  printf '\nInstalled cost HUD statusline:\n'
+  printf '  %s -> %s\n' "${AZURE_SETTINGS}" "${STATUSLINE}"
+fi
 if (( cost_config_created == 1 )); then
   printf '\nFill in the Azure account the HUD reports on:\n'
   printf '  %s\n' "${COST_CONFIG}"
