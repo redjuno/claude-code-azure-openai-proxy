@@ -66,7 +66,7 @@ def write_cache(value):
 
 def retry_after_seconds(stderr):
     """Seconds Azure asked us to wait, when it said so."""
-    match = re.search(r"retry-after[^0-9]{0,20}(\d+)", stderr or "", re.IGNORECASE)
+    match = re.search(r"(?<!-ms)\bretry-after\s*:\s*(\d+)", stderr or "", re.IGNORECASE)
     if not match:
         return None
     return max(1, min(int(match.group(1)), 900))
@@ -96,23 +96,23 @@ def load_estimate_state(transcript_path):
     )
     try:
         state = json.loads(estimate_path(transcript_path).read_text())
-    except (OSError, ValueError):
-        return empty
-    if state.get("path") != str(transcript_path):
-        return empty
-    offset = int(state.get("offset", 0))
-    try:
-        if offset > pathlib.Path(transcript_path).stat().st_size:
+        if not isinstance(state, dict) or state.get("path") != str(transcript_path):
+            return empty
+        offset = int(state.get("offset", 0))
+        if offset < 0 or offset > pathlib.Path(transcript_path).stat().st_size:
             # Transcript shrank, so it is not the file we counted. Start over.
             return empty
-    except OSError:
+        totals = empty[0]
+        for model, counts in (state.get("totals") or {}).items():
+            if model in totals:
+                for name in totals[model]:
+                    totals[model][name] = int(counts.get(name, 0) or 0)
+        seen = [str(item) for item in (state.get("seen") or [])]
+    except Exception:
+        # This file is written by whatever version of the script ran last, and
+        # a shape we cannot read is worth no more than a fresh count.
         return empty
-    totals = empty[0]
-    for model, counts in (state.get("totals") or {}).items():
-        if model in totals:
-            for name in totals[model]:
-                totals[model][name] = int(counts.get(name, 0) or 0)
-    return totals, list(state.get("seen") or []), offset
+    return totals, seen, offset
 
 
 def save_estimate_state(transcript_path, totals, seen, offset):
@@ -467,13 +467,20 @@ def refresh():
 def maybe_refresh(cache):
     if not cache_is_stale(cache) or (LOCK_PATH.exists() and not lock_is_stale()):
         return
-    subprocess.Popen(
-        [sys.executable, __file__, "--refresh"],
-        stdin=subprocess.DEVNULL,
-        stdout=subprocess.DEVNULL,
-        stderr=subprocess.DEVNULL,
-        start_new_session=True,
-    )
+    if not os.access(ROOT, os.W_OK):
+        # A refresh could neither lock nor cache, so it would fail the same way
+        # on every render — several forks a second for the whole session.
+        return
+    try:
+        subprocess.Popen(
+            [sys.executable, __file__, "--refresh"],
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            start_new_session=True,
+        )
+    except OSError:
+        pass
 
 
 def main(args):
