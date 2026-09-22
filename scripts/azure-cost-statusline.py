@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 import datetime as dt
 import glob
+import hashlib
 import json
 import os
 import pathlib
@@ -14,7 +15,11 @@ ROOT = pathlib.Path(os.environ.get("CLAUDE_CONFIG_DIR") or pathlib.Path.home() /
 CONFIG_PATH = ROOT / "azure-cost.json"
 CACHE_PATH = ROOT / "azure-cost-cache.json"
 LOCK_PATH = ROOT / "azure-cost-refresh.lock"
-ESTIMATE_PATH = ROOT / "azure-cost-estimate.json"
+ESTIMATE_PREFIX = "azure-cost-estimate-"
+# Persisted ids only guard against the same message id arriving in a later
+# slice, so a bounded tail is enough and keeps the per-render write small.
+SEEN_LIMIT = 1000
+ESTIMATE_TTL_SECONDS = 7 * 24 * 3600
 REFRESH_SECONDS = 3600
 LOCK_TIMEOUT_SECONDS = 120
 # Azure Retail Prices API, GPT-5.6 Sol Data Zone Standard, USD per 1M tokens.
@@ -74,15 +79,20 @@ def parse_cost(response):
     )
 
 
+def estimate_path(transcript_path):
+    digest = hashlib.sha256(str(transcript_path).encode()).hexdigest()[:16]
+    return ROOT / f"{ESTIMATE_PREFIX}{digest}.json"
+
+
 def load_estimate_state(transcript_path):
     """Totals carried over from earlier renders of this same transcript."""
     empty = (
         {model: {name: 0 for name in prices} for model, prices in PRICE_RANGES.items()},
-        set(),
+        [],
         0,
     )
     try:
-        state = json.loads(ESTIMATE_PATH.read_text())
+        state = json.loads(estimate_path(transcript_path).read_text())
     except (OSError, ValueError):
         return empty
     if state.get("path") != str(transcript_path):
@@ -99,17 +109,34 @@ def load_estimate_state(transcript_path):
         if model in totals:
             for name in totals[model]:
                 totals[model][name] = int(counts.get(name, 0) or 0)
-    return totals, set(state.get("seen") or []), offset
+    return totals, list(state.get("seen") or []), offset
 
 
 def save_estimate_state(transcript_path, totals, seen, offset):
-    fd, temporary = tempfile.mkstemp(dir=ROOT, prefix="azure-cost-estimate-", text=True)
+    fd, temporary = tempfile.mkstemp(dir=ROOT, prefix=ESTIMATE_PREFIX, text=True)
     with os.fdopen(fd, "w") as file:
         json.dump(
-            {"path": str(transcript_path), "offset": offset, "totals": totals, "seen": sorted(seen)},
+            {
+                "path": str(transcript_path),
+                "offset": offset,
+                "totals": totals,
+                "seen": seen[-SEEN_LIMIT:],
+            },
             file,
         )
-    os.replace(temporary, ESTIMATE_PATH)
+    os.replace(temporary, estimate_path(transcript_path))
+    prune_estimate_state()
+
+
+def prune_estimate_state():
+    """Drop state for transcripts nobody has rendered in a week."""
+    cutoff = dt.datetime.now().timestamp() - ESTIMATE_TTL_SECONDS
+    for stale in ROOT.glob(f"{ESTIMATE_PREFIX}*"):
+        try:
+            if stale.stat().st_mtime < cutoff:
+                stale.unlink(missing_ok=True)
+        except OSError:
+            continue
 
 
 def render_session_estimate(transcript_path):
@@ -118,20 +145,30 @@ def render_session_estimate(transcript_path):
     # each time would delay the cost line this wrapper exists to print, so only
     # the bytes appended since the last render are read.
     totals, seen, offset = load_estimate_state(transcript_path)
+    recent = set(seen)
     try:
         with open(transcript_path) as transcript:
             transcript.seek(offset)
-            for line in transcript:
+            while True:
+                line = transcript.readline()
+                if not line:
+                    break
+                if not line.endswith("\n"):
+                    # Claude Code is mid-append. Leave the offset before this
+                    # partial line so the finished record is read next time.
+                    break
+                offset += len(line.encode())
                 try:
                     message = json.loads(line).get("message") or {}
                     usage = message.get("usage") or {}
                 except (AttributeError, ValueError):
                     continue
                 message_id = message.get("id")
-                if message_id and message_id in seen:
+                if message_id and message_id in recent:
                     continue
                 if message_id:
-                    seen.add(message_id)
+                    recent.add(message_id)
+                    seen.append(message_id)
                 model = price_family(str(message.get("model", "")))
                 if not model:
                     continue
@@ -140,7 +177,6 @@ def render_session_estimate(transcript_path):
                         totals[model][name] += int(usage.get(name, 0) or 0)
                     except (AttributeError, TypeError, ValueError):
                         continue
-            offset = transcript.tell()
     except (OSError, TypeError, ValueError):
         return None
     try:
@@ -279,10 +315,10 @@ def refresh():
     try:
         config = json.loads(CONFIG_PATH.read_text())
         resource_id = config["resource_id"].rstrip("/")
-        if "your-" in resource_id:
-            # install-alias.sh seeds the example config, and querying its
-            # placeholder resource group would fail every retry window for the
-            # life of the install. Say so instead, and check back rarely.
+        if "your-" in resource_id or not resource_id.startswith("/subscriptions/"):
+            # install-alias.sh seeds the example config, and a placeholder or
+            # malformed resource id would fail every retry window for the life
+            # of the install. Say so instead, and check back rarely.
             write_cache({
                 "error": "not configured",
                 "next_retry_at": (dt.datetime.now(dt.timezone.utc) + dt.timedelta(hours=6)).isoformat(),
@@ -329,7 +365,12 @@ def refresh():
                 # short retry would hammer it there. Start at the short wait and
                 # double it while throttles keep coming.
                 streak = int(value.get("throttle_streak", 0) or 0) + 1
-                seconds = retry_after_seconds(result.stderr) or min(60 * 2 ** (streak - 1), 900)
+                escalating = min(60 * 2 ** (streak - 1), 900)
+                hinted = retry_after_seconds(result.stderr)
+                # A 15s client-type hint is right for the first throttle, but
+                # repeats mean the hourly quota is gone and the hint would pin
+                # us to a retry-per-15s for the rest of the hour.
+                seconds = escalating if streak > 1 else (hinted or escalating)
                 value["throttle_streak"] = streak
             else:
                 seconds = 900
@@ -347,7 +388,18 @@ def refresh():
             }
         write_cache(value)
     except (OSError, ValueError, KeyError, subprocess.SubprocessError):
-        pass
+        # Without a cache entry the figure stays stale, so maybe_refresh()
+        # would spawn another refresh on every render — several a second with
+        # az missing or the config unreadable.
+        try:
+            stored = load_cache() or {}
+            stored.update({
+                "error": "unavailable",
+                "next_retry_at": (dt.datetime.now(dt.timezone.utc) + dt.timedelta(minutes=15)).isoformat(),
+            })
+            write_cache(stored)
+        except (OSError, ValueError):
+            pass
     finally:
         LOCK_PATH.unlink(missing_ok=True)
 
