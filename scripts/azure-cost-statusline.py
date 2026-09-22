@@ -4,6 +4,7 @@ import glob
 import json
 import os
 import pathlib
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -13,6 +14,7 @@ CONFIG_PATH = ROOT / "azure-cost.json"
 CACHE_PATH = ROOT / "azure-cost-cache.json"
 LOCK_PATH = ROOT / "azure-cost-refresh.lock"
 REFRESH_SECONDS = 3600
+LOCK_TIMEOUT_SECONDS = 120
 # Azure Retail Prices API, GPT-5.6 Sol Data Zone Standard, USD per 1M tokens.
 PRICE_RANGES = {
     "sol": {
@@ -28,6 +30,21 @@ PRICE_RANGES = {
         "output_tokens": (55.00, 90.00),
     },
 }
+
+
+# A transcript records whatever alias the proxy exposes, which is a tier name
+# on a default install (opus/fable/haiku) and may be a model name on a custom
+# one. Both have to resolve to a price table; a tier with no table (haiku/luna)
+# is simply left out of the estimate.
+PRICE_ALIASES = {"sol": "sol", "opus": "sol", "astra": "astra", "fable": "astra"}
+
+
+def price_family(model_name):
+    lowered = model_name.lower()
+    for token, family in PRICE_ALIASES.items():
+        if token in lowered:
+            return family
+    return None
 
 
 def parse_cost(response):
@@ -59,8 +76,7 @@ def render_session_estimate(transcript_path):
                     continue
                 if message_id:
                     seen.add(message_id)
-                model_name = str(message.get("model", "")).lower()
-                model = "astra" if "astra" in model_name else "sol" if "sol" in model_name else None
+                model = price_family(str(message.get("model", "")))
                 if not model:
                     continue
                 for name in totals[model]:
@@ -142,26 +158,59 @@ def hud_path():
     return max(candidates, key=version)
 
 
+def terminal_columns():
+    raw = (os.environ.get("COLUMNS") or "").strip()
+    try:
+        return max(1, int(raw) - 4)
+    except ValueError:
+        return 116
+
+
 def run_hud(stdin_data):
-    columns = max(1, int(os.environ.get("COLUMNS", "120")) - 4)
-    env = {**os.environ, "COLUMNS": str(columns)}
-    result = subprocess.run(
-        ["/opt/homebrew/bin/node", hud_path()],
-        input=stdin_data,
-        text=True,
-        capture_output=True,
-        env=env,
-        timeout=4,
-        check=False,
-    )
+    """Render claude-hud, or nothing at all.
+
+    The cost line is the reason this wrapper exists, so no claude-hud failure
+    may reach main(): a missing plugin, a node binary somewhere other than
+    Homebrew, or a hung render would otherwise take the whole statusline down.
+    """
+    node = shutil.which("node") or "/opt/homebrew/bin/node"
+    env = {**os.environ, "COLUMNS": str(terminal_columns())}
+    try:
+        result = subprocess.run(
+            [node, hud_path()],
+            input=stdin_data,
+            text=True,
+            capture_output=True,
+            env=env,
+            timeout=4,
+            check=False,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return ""
     return result.stdout
+
+
+def lock_is_stale():
+    try:
+        age = dt.datetime.now().timestamp() - LOCK_PATH.stat().st_mtime
+    except OSError:
+        return False
+    return age > LOCK_TIMEOUT_SECONDS
 
 
 def refresh():
     try:
         lock_fd = os.open(LOCK_PATH, os.O_CREAT | os.O_EXCL | os.O_WRONLY)
     except FileExistsError:
-        return
+        # A refresh killed mid-flight (SIGKILL, reboot) leaves the lock behind,
+        # and without this the cost figure would never update again.
+        if not lock_is_stale():
+            return
+        LOCK_PATH.unlink(missing_ok=True)
+        try:
+            lock_fd = os.open(LOCK_PATH, os.O_CREAT | os.O_EXCL | os.O_WRONLY)
+        except FileExistsError:
+            return
     os.close(lock_fd)
     try:
         config = json.loads(CONFIG_PATH.read_text())
@@ -228,7 +277,7 @@ def refresh():
 
 
 def maybe_refresh(cache):
-    if not cache_is_stale(cache) or LOCK_PATH.exists():
+    if not cache_is_stale(cache) or (LOCK_PATH.exists() and not lock_is_stale()):
         return
     subprocess.Popen(
         [sys.executable, __file__, "--refresh"],

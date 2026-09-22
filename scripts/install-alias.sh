@@ -22,9 +22,23 @@ fi
 mkdir -p "${CLAUDE_DIR}"
 
 # statusLine has to name an absolute path, so the tracked template carries a
-# placeholder and the real file is generated here.
-sed "s#__AZURE_COST_STATUSLINE__#${STATUSLINE}#g" \
-  "${ROOT_DIR}/config/azure-settings.json" > "${AZURE_SETTINGS}"
+# placeholder and the real file is generated here. The substitution runs through
+# python rather than sed: the path lands inside a JSON string that the shell then
+# executes, so it needs JSON escaping and shell quoting, and sed would also choke
+# on a path containing its delimiter or an unescaped "&".
+python3 - "${ROOT_DIR}/config/azure-settings.json" "${STATUSLINE}" "${AZURE_SETTINGS}" <<'PYTHON'
+import json
+import pathlib
+import shlex
+import sys
+
+template, statusline, destination = sys.argv[1:4]
+settings = json.loads(pathlib.Path(template).read_text())
+settings["statusLine"]["command"] = settings["statusLine"]["command"].replace(
+    "__AZURE_COST_STATUSLINE__", shlex.quote(statusline)
+)
+pathlib.Path(destination).write_text(json.dumps(settings, indent=2) + "\n")
+PYTHON
 
 # The cost config names a real subscription and resource, so it is never
 # committed and never overwritten once it exists.

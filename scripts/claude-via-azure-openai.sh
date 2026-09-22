@@ -80,7 +80,7 @@ run_preflight_command() {
 azure_cost_preflight() {
   local tenant_id="${CLAUDE_AZURE_TENANT_ID:-}"
   local subscription_id="${CLAUDE_AZURE_COST_SUBSCRIPTION_ID:-}"
-  local refresh_script="${CLAUDE_AZURE_COST_REFRESH_SCRIPT:-${HOME:-}/.claude/azure_cost_statusline.py}"
+  local refresh_script="${CLAUDE_AZURE_COST_REFRESH_SCRIPT:-${ROOT_DIR}/scripts/azure-cost-statusline.py}"
   local login_stdin="${CLAUDE_AZURE_LOGIN_STDIN:-/dev/tty}"
   local timeout_seconds="${CLAUDE_AZURE_PREFLIGHT_TIMEOUT:-5}"
 
