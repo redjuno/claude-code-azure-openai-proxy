@@ -4,6 +4,7 @@ import glob
 import json
 import os
 import pathlib
+import re
 import shutil
 import subprocess
 import sys
@@ -13,6 +14,7 @@ ROOT = pathlib.Path(os.environ.get("CLAUDE_CONFIG_DIR") or pathlib.Path.home() /
 CONFIG_PATH = ROOT / "azure-cost.json"
 CACHE_PATH = ROOT / "azure-cost-cache.json"
 LOCK_PATH = ROOT / "azure-cost-refresh.lock"
+ESTIMATE_PATH = ROOT / "azure-cost-estimate.json"
 REFRESH_SECONDS = 3600
 LOCK_TIMEOUT_SECONDS = 120
 # Azure Retail Prices API, GPT-5.6 Sol Data Zone Standard, USD per 1M tokens.
@@ -47,6 +49,21 @@ def price_family(model_name):
     return None
 
 
+def write_cache(value):
+    fd, temporary = tempfile.mkstemp(dir=ROOT, prefix="azure-cost-cache-", text=True)
+    with os.fdopen(fd, "w") as file:
+        json.dump(value, file)
+    os.replace(temporary, CACHE_PATH)
+
+
+def retry_after_seconds(stderr):
+    """Seconds Azure asked us to wait, when it said so."""
+    match = re.search(r"retry-after[^0-9]{0,20}(\d+)", stderr or "", re.IGNORECASE)
+    if not match:
+        return None
+    return max(1, min(int(match.group(1)), 900))
+
+
 def parse_cost(response):
     properties = response["properties"]
     indexes = {column["name"]: i for i, column in enumerate(properties["columns"])}
@@ -57,18 +74,57 @@ def parse_cost(response):
     )
 
 
+def load_estimate_state(transcript_path):
+    """Totals carried over from earlier renders of this same transcript."""
+    empty = (
+        {model: {name: 0 for name in prices} for model, prices in PRICE_RANGES.items()},
+        set(),
+        0,
+    )
+    try:
+        state = json.loads(ESTIMATE_PATH.read_text())
+    except (OSError, ValueError):
+        return empty
+    if state.get("path") != str(transcript_path):
+        return empty
+    offset = int(state.get("offset", 0))
+    try:
+        if offset > pathlib.Path(transcript_path).stat().st_size:
+            # Transcript shrank, so it is not the file we counted. Start over.
+            return empty
+    except OSError:
+        return empty
+    totals = empty[0]
+    for model, counts in (state.get("totals") or {}).items():
+        if model in totals:
+            for name in totals[model]:
+                totals[model][name] = int(counts.get(name, 0) or 0)
+    return totals, set(state.get("seen") or []), offset
+
+
+def save_estimate_state(transcript_path, totals, seen, offset):
+    fd, temporary = tempfile.mkstemp(dir=ROOT, prefix="azure-cost-estimate-", text=True)
+    with os.fdopen(fd, "w") as file:
+        json.dump(
+            {"path": str(transcript_path), "offset": offset, "totals": totals, "seen": sorted(seen)},
+            file,
+        )
+    os.replace(temporary, ESTIMATE_PATH)
+
+
 def render_session_estimate(transcript_path):
-    totals = {
-        model: {name: 0 for name in prices}
-        for model, prices in PRICE_RANGES.items()
-    }
-    seen = set()
+    # Transcripts are append-only and reach tens of MB in a long session, while
+    # the statusline re-renders every few hundred ms. Parsing the whole file
+    # each time would delay the cost line this wrapper exists to print, so only
+    # the bytes appended since the last render are read.
+    totals, seen, offset = load_estimate_state(transcript_path)
     try:
         with open(transcript_path) as transcript:
+            transcript.seek(offset)
             for line in transcript:
                 try:
-                    message = json.loads(line).get("message", {})
-                    usage = message.get("usage", {})
+                    message = json.loads(line).get("message") or {}
+                    usage = message.get("usage") or {}
                 except (AttributeError, ValueError):
                     continue
                 message_id = message.get("id")
@@ -80,9 +136,17 @@ def render_session_estimate(transcript_path):
                 if not model:
                     continue
                 for name in totals[model]:
-                    totals[model][name] += int(usage.get(name, 0) or 0)
-    except (OSError, TypeError):
+                    try:
+                        totals[model][name] += int(usage.get(name, 0) or 0)
+                    except (AttributeError, TypeError, ValueError):
+                        continue
+            offset = transcript.tell()
+    except (OSError, TypeError, ValueError):
         return None
+    try:
+        save_estimate_state(transcript_path, totals, seen, offset)
+    except OSError:
+        pass
 
     def estimate(model):
         usage = totals[model]
@@ -215,6 +279,15 @@ def refresh():
     try:
         config = json.loads(CONFIG_PATH.read_text())
         resource_id = config["resource_id"].rstrip("/")
+        if "your-" in resource_id:
+            # install-alias.sh seeds the example config, and querying its
+            # placeholder resource group would fail every retry window for the
+            # life of the install. Say so instead, and check back rarely.
+            write_cache({
+                "error": "not configured",
+                "next_retry_at": (dt.datetime.now(dt.timezone.utc) + dt.timedelta(hours=6)).isoformat(),
+            })
+            return
         # Cost Management is queried at the narrowest scope the account has rights to.
         # A subscription-scope query needs a subscription-level role; with only a
         # resource-group role Azure answers RBACAccessDenied, so default to the
@@ -249,15 +322,21 @@ def refresh():
         if result.returncode:
             message = result.stderr.lower()
             error = "throttled" if "429" in message or "too many requests" in message else "auth required" if "login" in message or "authorization" in message else "unavailable"
-            # Cost Management throttles the CLI client type for seconds at a time
-            # (x-ms-ratelimit-...-clienttype-retry-after: 15), so a 15 minute
-            # backoff there kept the HUD stale for hours over a transient 429.
-            # Auth and unavailable are not self-healing that fast, so they keep it.
-            backoff = dt.timedelta(minutes=1) if error == "throttled" else dt.timedelta(minutes=15)
             value = load_cache() or {}
+            if error == "throttled":
+                # Client-type throttling clears in seconds, but an exhausted
+                # hourly quota returns 429 for the rest of the hour, and a fixed
+                # short retry would hammer it there. Start at the short wait and
+                # double it while throttles keep coming.
+                streak = int(value.get("throttle_streak", 0) or 0) + 1
+                seconds = retry_after_seconds(result.stderr) or min(60 * 2 ** (streak - 1), 900)
+                value["throttle_streak"] = streak
+            else:
+                seconds = 900
+                value.pop("throttle_streak", None)
             value.update({
                 "error": error,
-                "next_retry_at": (dt.datetime.now(dt.timezone.utc) + backoff).isoformat(),
+                "next_retry_at": (dt.datetime.now(dt.timezone.utc) + dt.timedelta(seconds=seconds)).isoformat(),
             })
         else:
             cost, currency = parse_cost(json.loads(result.stdout))
@@ -266,10 +345,7 @@ def refresh():
                 "currency": currency,
                 "updated_at": dt.datetime.now(dt.timezone.utc).isoformat(),
             }
-        fd, temporary = tempfile.mkstemp(dir=ROOT, prefix="azure-cost-cache-", text=True)
-        with os.fdopen(fd, "w") as file:
-            json.dump(value, file)
-        os.replace(temporary, CACHE_PATH)
+        write_cache(value)
     except (OSError, ValueError, KeyError, subprocess.SubprocessError):
         pass
     finally:

@@ -33,11 +33,22 @@ import shlex
 import sys
 
 template, statusline, destination = sys.argv[1:4]
-settings = json.loads(pathlib.Path(template).read_text())
-settings["statusLine"]["command"] = settings["statusLine"]["command"].replace(
+template_settings = json.loads(pathlib.Path(template).read_text())
+command = template_settings["statusLine"]["command"].replace(
     "__AZURE_COST_STATUSLINE__", shlex.quote(statusline)
 )
-pathlib.Path(destination).write_text(json.dumps(settings, indent=2) + "\n")
+
+# Only statusLine is ours. Anything else the user added to this file — hooks,
+# permissions, env — survives re-running the installer after moving the repo.
+target = pathlib.Path(destination)
+try:
+    settings = json.loads(target.read_text())
+except (OSError, ValueError):
+    settings = {}
+if not isinstance(settings, dict):
+    settings = {}
+settings["statusLine"] = {"type": "command", "command": command}
+target.write_text(json.dumps(settings, indent=2) + "\n")
 PYTHON
 
 # The cost config names a real subscription and resource, so it is never
