@@ -99,6 +99,7 @@ claude-azure
 ```
 
 `.env`의 `CLAUDE_AZURE_COST_SUBSCRIPTION_ID`는 이것과 별개입니다. 그쪽은 실행 전 preflight가 접근 권한을 확인하는 구독이고, 비용 조회 스코프는 위 `resource_id`에서 나옵니다.
+- statusline의 토큰 추정 줄은 `sol`/`opus`, `astra`/`fable`이 이름에 들어간 모델만 계산합니다. 별칭을 그 밖의 이름(`gpt-5.6` 등)으로 바꾸면 단가표에 걸리지 않아 추정 줄이 사라집니다. 아래 MTD 실비용 줄은 별칭과 무관하게 그대로 동작합니다.
 - 비용 조회 스코프는 `resource_id`에서 잘라낸 리소스 그룹입니다. 구독 스코프로 조회하려면 구독 레벨 권한이 필요하고, 리소스 그룹 권한만 있으면 Azure가 `RBACAccessDenied`를 돌려줍니다. 구독 스코프 권한이 있다면 `azure-cost.json`에 `scope` 키를 넣어 덮어쓸 수 있습니다.
 - 위 값을 바꾼 뒤에는 `~/.claude/azure-cost-cache.json`을 지워야 옛 비용이 남지 않습니다. 429가 오면 응답의 `retry-after`를 따르고, 없으면 1분에서 시작해 연속 throttle마다 두 배로 늘려 최대 15분까지 기다립니다. 설정 파일이 아직 예시 값 그대로면 조회를 아예 하지 않고 `Azure cost: not configured`로 표시합니다.
 - `CLAUDE_CODE_OPUS_ALIAS`, `CLAUDE_CODE_FABLE_ALIAS`, `CLAUDE_CODE_HAIKU_ALIAS`는 Claude Code에 노출할 이름이며 Azure deployment name과 달라도 됩니다. Claude Code에서 `/model opus`, `/model fable`, `/model haiku`로 전환합니다.

@@ -78,7 +78,7 @@ def parse_cost(response):
     rows = properties.get("rows", [])
     return (
         sum(float(row[indexes["Cost"]]) for row in rows),
-        str(rows[0][indexes["Currency"]]) if rows else "USD",
+        str(rows[0][indexes["Currency"]]) if rows else None,
     )
 
 
@@ -150,17 +150,20 @@ def render_session_estimate(transcript_path):
     totals, seen, offset = load_estimate_state(transcript_path)
     recent = set(seen)
     try:
-        with open(transcript_path) as transcript:
+        # Opened as bytes: in text mode universal newlines rewrite \r\n, and the
+        # offset we record would drift a byte per line against the real file.
+        with open(transcript_path, "rb") as transcript:
             transcript.seek(offset)
             while True:
-                line = transcript.readline()
-                if not line:
+                raw = transcript.readline()
+                if not raw:
                     break
-                if not line.endswith("\n"):
+                if not raw.endswith(b"\n"):
                     # Claude Code is mid-append. Leave the offset before this
                     # partial line so the finished record is read next time.
                     break
-                offset += len(line.encode())
+                offset += len(raw)
+                line = raw.decode("utf-8", "replace")
                 try:
                     message = json.loads(line).get("message") or {}
                     usage = message.get("usage") or {}
@@ -214,9 +217,12 @@ def render_session_estimate(transcript_path):
 
 def load_cache():
     try:
-        return json.loads(CACHE_PATH.read_text())
+        cache = json.loads(CACHE_PATH.read_text())
     except (OSError, ValueError):
         return None
+    # This file survives upgrades of the script, so treat any shape it does not
+    # recognise as no cache at all rather than letting it reach render_cost.
+    return cache if isinstance(cache, dict) else None
 
 
 def cache_is_stale(cache):
@@ -234,16 +240,28 @@ def cache_is_stale(cache):
 def render_cost(cache, stale=None):
     if not cache:
         return "Azure OpenAI MTD: loading"
-    if cache.get("error") and "cost" not in cache:
-        return f"Azure cost: {cache['error']}"
+    if cache.get("cost") is None:
+        return f"Azure cost: {cache.get('error') or 'loading'}"
     stale = cache_is_stale(cache) if stale is None else stale
-    updated = dt.datetime.fromisoformat(cache["updated_at"]).astimezone()
-    suffix = f" · posted {updated:%m-%d %H:%M}"
+    suffix = ""
+    try:
+        updated = dt.datetime.fromisoformat(cache["updated_at"]).astimezone()
+        suffix = f" · posted {updated:%m-%d %H:%M}"
+    except (KeyError, TypeError, ValueError):
+        pass
     if stale or cache.get("error"):
         suffix += " · stale"
     if cache.get("error"):
         suffix += f" · {cache['error']}"
-    return f"Azure OpenAI MTD: {cache['currency']} {cache['cost']:,.2f}{suffix}"
+    currency = cache.get("currency")
+    if not currency:
+        # Cost Management returns no rows until the month's first usage is
+        # posted. Naming a currency there would be inventing one.
+        return f"Azure OpenAI MTD: nothing posted yet{suffix}"
+    try:
+        return f"Azure OpenAI MTD: {currency} {float(cache['cost']):,.2f}{suffix}"
+    except (TypeError, ValueError):
+        return "Azure cost: unavailable"
 
 
 def hud_path():
@@ -266,7 +284,10 @@ def terminal_columns():
     try:
         return max(1, int(raw) - 4)
     except ValueError:
-        return 116
+        pass
+    # Claude Code does not export COLUMNS to a statusline command, so without
+    # this every terminal would be rendered at one hardcoded width.
+    return max(1, shutil.get_terminal_size(fallback=(120, 24)).columns - 4)
 
 
 def run_hud(stdin_data):
@@ -306,7 +327,11 @@ def take_lock():
     token = f"{os.getpid()}:{dt.datetime.now().timestamp()}"
     try:
         lock_fd = os.open(LOCK_PATH, os.O_CREAT | os.O_EXCL | os.O_WRONLY)
-    except FileExistsError:
+    except OSError as error:
+        if not isinstance(error, FileExistsError):
+            # Unwritable config dir: nothing here can be recovered, and a
+            # traceback on stderr helps nobody at statusline cadence.
+            return None
         # A refresh killed mid-flight (SIGKILL, reboot) leaves the lock behind,
         # and without this the cost figure would never update again. Whoever
         # wins the re-create keeps it; the losers back off rather than deleting
@@ -338,9 +363,18 @@ def refresh():
         return
     try:
         config = json.loads(CONFIG_PATH.read_text())
-        resource_id = config["resource_id"].rstrip("/")
-        segments = set(resource_id.split("/"))
-        if segments & PLACEHOLDER_SEGMENTS or not resource_id.startswith("/subscriptions/"):
+        resource_id = (config.get("resource_id") or "").rstrip("/") if isinstance(config, dict) else ""
+        parts = resource_id.split("/")
+        # A truncated id still splits into a subscription scope, which is the
+        # RBACAccessDenied case this default exists to avoid, so require the
+        # resource group and the account to actually be there.
+        well_formed = (
+            len(parts) >= 9
+            and resource_id.startswith("/subscriptions/")
+            and parts[3].lower() == "resourcegroups"
+            and all(parts[i] for i in (2, 4, 8))
+        )
+        if not well_formed or set(parts) & PLACEHOLDER_SEGMENTS:
             # install-alias.sh seeds the example config, and a placeholder or
             # malformed resource id would fail every retry window for the life
             # of the install. Say so instead, and check back rarely.
