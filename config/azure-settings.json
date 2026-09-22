@@ -1,0 +1,6 @@
+{
+  "statusLine": {
+    "type": "command",
+    "command": "/usr/bin/env python3 __AZURE_COST_STATUSLINE__"
+  }
+}

@@ -1,0 +1,4 @@
+{
+  "subscription_id": "your-subscription-id",
+  "resource_id": "/subscriptions/your-subscription-id/resourceGroups/your-resource-group/providers/Microsoft.CognitiveServices/accounts/your-azure-openai-account"
+}
