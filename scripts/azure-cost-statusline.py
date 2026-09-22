@@ -20,6 +20,9 @@ ESTIMATE_PREFIX = "azure-cost-estimate-"
 # slice, so a bounded tail is enough and keeps the per-render write small.
 SEEN_LIMIT = 1000
 ESTIMATE_TTL_SECONDS = 7 * 24 * 3600
+# Straight from config/azure-cost.example.json. Matched as whole path segments,
+# so a real resource group named e.g. "rg-your-team" is not mistaken for one.
+PLACEHOLDER_SEGMENTS = {"your-subscription-id", "your-resource-group", "your-azure-openai-account"}
 REFRESH_SECONDS = 3600
 LOCK_TIMEOUT_SECONDS = 120
 # Azure Retail Prices API, GPT-5.6 Sol Data Zone Standard, USD per 1M tokens.
@@ -228,7 +231,7 @@ def cache_is_stale(cache):
         return True
 
 
-def render_cost(cache, now_timestamp=None, stale=None):
+def render_cost(cache, stale=None):
     if not cache:
         return "Azure OpenAI MTD: loading"
     if cache.get("error") and "cost" not in cache:
@@ -298,24 +301,46 @@ def lock_is_stale():
     return age > LOCK_TIMEOUT_SECONDS
 
 
-def refresh():
+def take_lock():
+    """Claim the refresh lock, stamped so only this process releases it."""
+    token = f"{os.getpid()}:{dt.datetime.now().timestamp()}"
     try:
         lock_fd = os.open(LOCK_PATH, os.O_CREAT | os.O_EXCL | os.O_WRONLY)
     except FileExistsError:
         # A refresh killed mid-flight (SIGKILL, reboot) leaves the lock behind,
-        # and without this the cost figure would never update again.
+        # and without this the cost figure would never update again. Whoever
+        # wins the re-create keeps it; the losers back off rather than deleting
+        # the winner's fresh lock and running a second query alongside it.
         if not lock_is_stale():
-            return
-        LOCK_PATH.unlink(missing_ok=True)
+            return None
         try:
+            LOCK_PATH.unlink()
             lock_fd = os.open(LOCK_PATH, os.O_CREAT | os.O_EXCL | os.O_WRONLY)
-        except FileExistsError:
-            return
-    os.close(lock_fd)
+        except OSError:
+            return None
+    with os.fdopen(lock_fd, "w") as lock_file:
+        lock_file.write(token)
+    return token
+
+
+def release_lock(token):
+    """Release only our own lock, never one a stale-lock stealer replaced."""
+    try:
+        if LOCK_PATH.read_text() == token:
+            LOCK_PATH.unlink(missing_ok=True)
+    except OSError:
+        pass
+
+
+def refresh():
+    token = take_lock()
+    if token is None:
+        return
     try:
         config = json.loads(CONFIG_PATH.read_text())
         resource_id = config["resource_id"].rstrip("/")
-        if "your-" in resource_id or not resource_id.startswith("/subscriptions/"):
+        segments = set(resource_id.split("/"))
+        if segments & PLACEHOLDER_SEGMENTS or not resource_id.startswith("/subscriptions/"):
             # install-alias.sh seeds the example config, and a placeholder or
             # malformed resource id would fail every retry window for the life
             # of the install. Say so instead, and check back rarely.
@@ -387,21 +412,22 @@ def refresh():
                 "updated_at": dt.datetime.now(dt.timezone.utc).isoformat(),
             }
         write_cache(value)
-    except (OSError, ValueError, KeyError, subprocess.SubprocessError):
-        # Without a cache entry the figure stays stale, so maybe_refresh()
-        # would spawn another refresh on every render — several a second with
-        # az missing or the config unreadable.
+    except Exception:
+        # Anything at all: without a cache entry the figure stays stale, so
+        # maybe_refresh() would spawn another refresh on every render — several
+        # a second with az missing or azure-cost.json holding the wrong shape.
         try:
             stored = load_cache() or {}
+            stored.pop("throttle_streak", None)
             stored.update({
                 "error": "unavailable",
                 "next_retry_at": (dt.datetime.now(dt.timezone.utc) + dt.timedelta(minutes=15)).isoformat(),
             })
             write_cache(stored)
-        except (OSError, ValueError):
+        except OSError:
             pass
     finally:
-        LOCK_PATH.unlink(missing_ok=True)
+        release_lock(token)
 
 
 def maybe_refresh(cache):
