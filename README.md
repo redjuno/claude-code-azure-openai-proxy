@@ -90,15 +90,18 @@ claude-azure
 - `LITELLM_HOST`는 외부에 노출되지 않도록 기본값 `127.0.0.1` 사용을 권장합니다.
 - Azure Cost HUD preflight는 `CLAUDE_AZURE_TENANT_ID`와 `CLAUDE_AZURE_COST_SUBSCRIPTION_ID`를 둘 다 설정할 때만 활성화됩니다.
 - 인증이 만료되면 `az login --tenant "$CLAUDE_AZURE_TENANT_ID"`가 실행됩니다. 로그인 취소, RBAC 오류, 비용 갱신 실패가 있어도 Claude Code는 계속 시작합니다.
-- 비대화형 Azure 검사는 기본 5초 제한입니다. 필요하면 `CLAUDE_AZURE_PREFLIGHT_TIMEOUT`을 조정하고, 기본 helper 대신 실행 파일을 쓰려면 `CLAUDE_AZURE_COST_REFRESH_SCRIPT`에 경로를 지정합니다.
-- HUD가 실제로 비용을 조회하는 대상은 저장소 밖 `~/.claude/azure-cost.json`의 `subscription_id`와 `resource_id`입니다. `CLAUDE_AZURE_COST_SUBSCRIPTION_ID`와 같은 구독이어야 하고, `resource_id`는 `AZURE_API_BASE`가 가리키는 Azure OpenAI 계정이어야 합니다. 셋 중 하나만 옛 값으로 남으면 지금 쓰는 배포의 비용이 HUD에 잡히지 않습니다.
+- 비대화형 Azure 검사는 기본 5초 제한입니다. 필요하면 `CLAUDE_AZURE_PREFLIGHT_TIMEOUT`을 조정하고, 기본 helper 대신 실행 파일을 쓰려면 `CLAUDE_AZURE_COST_REFRESH_SCRIPT`에 **절대 경로**를 지정합니다. `claude-azure`는 작업 중인 프로젝트 디렉토리에서 실행되므로, 상대 경로를 쓰면 그 프로젝트 기준으로 찾다가 조용히 건너뜁니다.
+- HUD가 실제로 비용을 조회하는 대상은 `~/.claude/azure-cost.json`의 `resource_id` 하나입니다. `AZURE_API_BASE`가 가리키는 Azure OpenAI 계정이어야 하며, 옛 값이 남아 있으면 지금 쓰는 배포의 비용이 HUD에 잡히지 않습니다. 실제 계정 식별자가 들어가므로 이 파일은 `.env`와 마찬가지로 저장소에 두지 않습니다(양식은 `config/azure-cost.example.json`).
 ```json
 {
-  "subscription_id": "<subscription-id>",
   "resource_id": "/subscriptions/<subscription-id>/resourceGroups/<rg>/providers/Microsoft.CognitiveServices/accounts/<account>"
 }
 ```
-- 위 값을 바꾼 뒤에는 `~/.claude/azure-cost-cache.json`을 지워야 옛 비용이 남지 않습니다. Cost Management API는 호출 빈도를 엄격히 제한하므로, 갱신 직후 `{"error": "throttled", "next_retry_at": ...}`가 보이면 그 시각까지 기다리면 됩니다.
+
+`.env`의 `CLAUDE_AZURE_COST_SUBSCRIPTION_ID`는 이것과 별개입니다. 그쪽은 실행 전 preflight가 접근 권한을 확인하는 구독이고, 비용 조회 스코프는 위 `resource_id`에서 나옵니다.
+- statusline의 토큰 추정 줄은 `sol`/`opus`, `astra`/`fable`이 이름에 들어간 모델만 계산합니다. 별칭을 그 밖의 이름(`gpt-5.6` 등)으로 바꾸면 단가표에 걸리지 않아 추정 줄이 사라집니다. 아래 MTD 실비용 줄은 별칭과 무관하게 그대로 동작합니다.
+- 비용 조회 스코프는 `resource_id`에서 잘라낸 리소스 그룹입니다. 구독 스코프로 조회하려면 구독 레벨 권한이 필요하고, 리소스 그룹 권한만 있으면 Azure가 `RBACAccessDenied`를 돌려줍니다. 구독 스코프 권한이 있다면 `azure-cost.json`에 `scope` 키를 넣어 덮어쓸 수 있습니다.
+- 위 값을 바꾼 뒤에는 `~/.claude/azure-cost-cache.json`을 지워야 옛 비용이 남지 않습니다. 첫 429는 응답의 `retry-after`(초 단위)를 따르고, 헤더가 없으면 1분을 기다립니다. throttle이 연속되면 헤더를 무시하고 1분에서 두 배씩 늘려 최대 15분까지 기다립니다 — 시간당 쿼터가 바닥난 경우 15초짜리 헤더를 그대로 따르면 남은 한 시간 내내 재시도만 반복하기 때문입니다. 설정 파일이 아직 예시 값 그대로면 조회를 아예 하지 않고 `Azure cost: not configured`로 표시합니다.
 - `CLAUDE_CODE_OPUS_ALIAS`, `CLAUDE_CODE_FABLE_ALIAS`, `CLAUDE_CODE_HAIKU_ALIAS`는 Claude Code에 노출할 이름이며 Azure deployment name과 달라도 됩니다. Claude Code에서 `/model opus`, `/model fable`, `/model haiku`로 전환합니다.
 - sonnet 티어에 대응하는 배포가 없어서 sonnet은 opus 별칭으로 연결됩니다. 백그라운드 호출이 실패하지 않게 하기 위한 것입니다.
 - `.env`는 Git에 올라가지 않도록 무시 처리되어 있습니다.
@@ -120,10 +123,12 @@ make alias
 source ~/.zshrc
 ```
 
-`make alias`는 두 가지를 설정합니다.
+`make alias`는 네 가지를 설정합니다.
 
 - `~/.zshrc`에 `claude-azure` alias 등록
 - `~/.local/bin/claude-azure` 실행 파일 shim 생성
+- `~/.claude/azure-settings.json`의 statusLine을 `scripts/azure-cost-statusline.py`로 지정합니다. 파일이 이미 있으면 statusLine만 교체하고 나머지 키는 그대로 둡니다. alias와 shim이 이 파일을 `--settings`로 넘기므로, 비용 HUD는 `claude-azure`로 실행할 때만 붙고 평소 `claude`에는 영향이 없습니다.
+- `~/.claude/azure-cost.json` 생성 — `config/azure-cost.example.json`을 복사합니다. **이미 있으면 덮어쓰지 않습니다.**
 
 이후부터는 작업하려는 프로젝트 폴더로 먼저 이동한 뒤 `claude-azure`만 실행하면 됩니다.
 
