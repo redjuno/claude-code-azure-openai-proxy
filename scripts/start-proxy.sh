@@ -18,18 +18,38 @@ fi
 
 sed \
   -e "s#__AZURE_DEPLOYMENT_OPUS__#${AZURE_DEPLOYMENT_OPUS}#g" \
-  -e "s#__AZURE_DEPLOYMENT_FABLE__#${AZURE_DEPLOYMENT_FABLE}#g" \
   -e "s#__AZURE_DEPLOYMENT_HAIKU__#${AZURE_DEPLOYMENT_HAIKU}#g" \
   -e "s#__CLAUDE_CODE_OPUS_ALIAS__#${CLAUDE_CODE_OPUS_ALIAS}#g" \
-  -e "s#__CLAUDE_CODE_FABLE_ALIAS__#${CLAUDE_CODE_FABLE_ALIAS}#g" \
   -e "s#__CLAUDE_CODE_HAIKU_ALIAS__#${CLAUDE_CODE_HAIKU_ALIAS}#g" \
   "${ROOT_DIR}/config/litellm.config.yaml" > "${GENERATED_CONFIG}"
 
+EXPOSING="${CLAUDE_CODE_OPUS_ALIAS} -> azure/${AZURE_DEPLOYMENT_OPUS}, ${CLAUDE_CODE_HAIKU_ALIAS} -> azure/${AZURE_DEPLOYMENT_HAIKU}"
+
+# The fable tier has no equivalent-quality model on every account, so it is
+# the one tier allowed to simply not exist rather than fall back to another
+# deployment. Spliced into model_list only when both values are set.
+if [[ -n "${AZURE_DEPLOYMENT_FABLE:-}" && -n "${CLAUDE_CODE_FABLE_ALIAS:-}" ]]; then
+  FABLE_BLOCK="$(sed \
+    -e "s#__AZURE_DEPLOYMENT_FABLE__#${AZURE_DEPLOYMENT_FABLE}#g" \
+    -e "s#__CLAUDE_CODE_FABLE_ALIAS__#${CLAUDE_CODE_FABLE_ALIAS}#g" \
+    "${ROOT_DIR}/config/litellm.fable-tier.yaml")"
+  python3 - "${GENERATED_CONFIG}" "${FABLE_BLOCK}" <<'PYTHON'
+import pathlib
+import sys
+
+config_path, fable_block = sys.argv[1:3]
+config = pathlib.Path(config_path)
+text = config.read_text()
+marker = "\nlitellm_settings:"
+assert marker in text, "config/litellm.config.yaml no longer has a litellm_settings section"
+text = text.replace(marker, f"\n{fable_block}{marker}", 1)
+config.write_text(text)
+PYTHON
+  EXPOSING="${EXPOSING}, ${CLAUDE_CODE_FABLE_ALIAS} -> azure/${AZURE_DEPLOYMENT_FABLE}"
+fi
+
 printf 'Starting LiteLLM proxy on http://%s:%s\n' "${LITELLM_HOST}" "${LITELLM_PORT}"
-printf 'Exposing %s -> azure/%s, %s -> azure/%s, %s -> azure/%s\n' \
-  "${CLAUDE_CODE_OPUS_ALIAS}" "${AZURE_DEPLOYMENT_OPUS}" \
-  "${CLAUDE_CODE_FABLE_ALIAS}" "${AZURE_DEPLOYMENT_FABLE}" \
-  "${CLAUDE_CODE_HAIKU_ALIAS}" "${AZURE_DEPLOYMENT_HAIKU}"
+printf 'Exposing %s\n' "${EXPOSING}"
 printf 'Azure API version: %s\n' "${AZURE_API_VERSION}"
 
 exec uvx \

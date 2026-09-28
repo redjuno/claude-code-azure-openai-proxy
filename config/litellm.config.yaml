@@ -6,6 +6,9 @@
 # ("Function tools with reasoning_effort are not supported"), and LiteLLM only
 # bridges to /responses on its own for deployment names it recognises as
 # gpt-5.4+, which these are not.
+#
+# The fable tier is optional (config/litellm.fable-tier.yaml, spliced in by
+# start-proxy.sh) since some accounts have no astra-equivalent deployment.
 model_list:
   - model_name: __CLAUDE_CODE_OPUS_ALIAS__
     litellm_params:
@@ -16,15 +19,6 @@ model_list:
     model_info:
       # base_model must be a model LiteLLM knows, otherwise it sends max_tokens
       # instead of max_completion_tokens and Azure rejects the request.
-      base_model: azure/gpt-5
-
-  - model_name: __CLAUDE_CODE_FABLE_ALIAS__
-    litellm_params:
-      model: azure/responses/__AZURE_DEPLOYMENT_FABLE__
-      api_key: os.environ/AZURE_API_KEY
-      api_base: os.environ/AZURE_API_BASE
-      api_version: os.environ/AZURE_API_VERSION
-    model_info:
       base_model: azure/gpt-5
 
   - model_name: __CLAUDE_CODE_HAIKU_ALIAS__
