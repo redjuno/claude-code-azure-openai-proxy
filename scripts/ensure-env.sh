@@ -54,8 +54,15 @@ export LITELLM_HOST="${LITELLM_HOST:-127.0.0.1}"
 export LITELLM_PORT="${LITELLM_PORT:-4000}"
 export CLAUDE_CODE_OPUS_ALIAS="${CLAUDE_CODE_OPUS_ALIAS:-opus}"
 export CLAUDE_CODE_HAIKU_ALIAS="${CLAUDE_CODE_HAIKU_ALIAS:-haiku}"
-# Only defaulted when a deployment exists to pair with it, so start-proxy.sh's
-# "is fable configured" check does not see a default alias with no model.
+# Every consumer (start-proxy.sh, claude-via-azure-openai.sh, test-proxy.sh)
+# only checks CLAUDE_CODE_FABLE_ALIAS to decide whether fable exists, so this
+# is the one place that has to make it agree with AZURE_DEPLOYMENT_FABLE. A
+# user can set CLAUDE_CODE_FABLE_ALIAS in .env while leaving the deployment
+# unset (or clearing only the deployment later), and .env is `source`d above
+# before this runs, so a leftover alias here must be cleared, not just left
+# undefaulted.
 if [[ -n "${AZURE_DEPLOYMENT_FABLE:-}" ]]; then
   export CLAUDE_CODE_FABLE_ALIAS="${CLAUDE_CODE_FABLE_ALIAS:-fable}"
+else
+  unset CLAUDE_CODE_FABLE_ALIAS
 fi
