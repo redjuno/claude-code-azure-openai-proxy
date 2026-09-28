@@ -11,8 +11,12 @@ unset ANTHROPIC_API_KEY
 
 export ANTHROPIC_MODEL="${CLAUDE_CODE_OPUS_ALIAS}"
 export ANTHROPIC_DEFAULT_OPUS_MODEL="${CLAUDE_CODE_OPUS_ALIAS}"
-export ANTHROPIC_DEFAULT_FABLE_MODEL="${CLAUDE_CODE_FABLE_ALIAS}"
 export ANTHROPIC_DEFAULT_HAIKU_MODEL="${CLAUDE_CODE_HAIKU_ALIAS}"
+# Not every account has an astra-equivalent deployment, so unlike the tiers
+# above, fable is allowed to simply have no alias and no ANTHROPIC_* mapping.
+if [[ -n "${CLAUDE_CODE_FABLE_ALIAS:-}" ]]; then
+  export ANTHROPIC_DEFAULT_FABLE_MODEL="${CLAUDE_CODE_FABLE_ALIAS}"
+fi
 # No deployment maps to the sonnet tier, so it points at the opus one. Without
 # this, Claude Code would ask the proxy for a real Anthropic model name and fail.
 export ANTHROPIC_DEFAULT_SONNET_MODEL="${CLAUDE_CODE_OPUS_ALIAS}"

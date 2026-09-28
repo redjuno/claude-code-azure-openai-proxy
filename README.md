@@ -84,7 +84,7 @@ claude-azure
 주의할 점:
 
 - `AZURE_API_BASE`는 Azure OpenAI 리소스의 endpoint입니다.
-- `AZURE_DEPLOYMENT_OPUS`, `AZURE_DEPLOYMENT_FABLE`, `AZURE_DEPLOYMENT_HAIKU`는 모델 이름이 아니라 Azure에서 만든 deployment name입니다.
+- `AZURE_DEPLOYMENT_OPUS`, `AZURE_DEPLOYMENT_FABLE`, `AZURE_DEPLOYMENT_HAIKU`는 모델 이름이 아니라 Azure에서 만든 deployment name입니다. `AZURE_DEPLOYMENT_FABLE`은 선택 사항입니다 — astra급 모델 배포가 없는 계정에서는 값을 비우면 fable 티어 없이 opus/haiku만으로 동작합니다.
 - `AZURE_API_VERSION`은 `2025-03-01-preview` 이상이어야 합니다.
 - `LITELLM_MASTER_KEY`는 Claude Code와 로컬 LiteLLM 사이에서 사용하는 로컬 인증 키입니다. 실제 Anthropic API 키가 아닙니다.
 - `LITELLM_HOST`는 외부에 노출되지 않도록 기본값 `127.0.0.1` 사용을 권장합니다.
@@ -102,7 +102,7 @@ claude-azure
 - statusline의 토큰 추정 줄은 `sol`/`opus`, `astra`/`fable`이 이름에 들어간 모델만 계산합니다. 별칭을 그 밖의 이름(`gpt-5.6` 등)으로 바꾸면 단가표에 걸리지 않아 추정 줄이 사라집니다. 아래 MTD 실비용 줄은 별칭과 무관하게 그대로 동작합니다.
 - 비용 조회 스코프는 `resource_id`에서 잘라낸 리소스 그룹입니다. 구독 스코프로 조회하려면 구독 레벨 권한이 필요하고, 리소스 그룹 권한만 있으면 Azure가 `RBACAccessDenied`를 돌려줍니다. 구독 스코프 권한이 있다면 `azure-cost.json`에 `scope` 키를 넣어 덮어쓸 수 있습니다.
 - 위 값을 바꾼 뒤에는 `~/.claude/azure-cost-cache.json`을 지워야 옛 비용이 남지 않습니다. 첫 429는 응답의 `retry-after`(초 단위)를 따르고, 헤더가 없으면 1분을 기다립니다. throttle이 연속되면 헤더를 무시하고 1분에서 두 배씩 늘려 최대 15분까지 기다립니다 — 시간당 쿼터가 바닥난 경우 15초짜리 헤더를 그대로 따르면 남은 한 시간 내내 재시도만 반복하기 때문입니다. 설정 파일이 아직 예시 값 그대로면 조회를 아예 하지 않고 `Azure cost: not configured`로 표시합니다.
-- `CLAUDE_CODE_OPUS_ALIAS`, `CLAUDE_CODE_FABLE_ALIAS`, `CLAUDE_CODE_HAIKU_ALIAS`는 Claude Code에 노출할 이름이며 Azure deployment name과 달라도 됩니다. Claude Code에서 `/model opus`, `/model fable`, `/model haiku`로 전환합니다.
+- `CLAUDE_CODE_OPUS_ALIAS`, `CLAUDE_CODE_FABLE_ALIAS`, `CLAUDE_CODE_HAIKU_ALIAS`는 Claude Code에 노출할 이름이며 Azure deployment name과 달라도 됩니다. Claude Code에서 `/model opus`, `/model fable`, `/model haiku`로 전환합니다. `AZURE_DEPLOYMENT_FABLE`을 비우면 `CLAUDE_CODE_FABLE_ALIAS`를 채워도 무시되고, `/model fable`은 존재하지 않는 모델로 처리됩니다 — sonnet처럼 opus로 대체되지 않습니다.
 - sonnet 티어에 대응하는 배포가 없어서 sonnet은 opus 별칭으로 연결됩니다. 백그라운드 호출이 실패하지 않게 하기 위한 것입니다.
 - `.env`는 Git에 올라가지 않도록 무시 처리되어 있습니다.
 - `make doctor`에서 `env ok`가 나오면 환경 설정 검사가 완료된 것입니다.
@@ -268,7 +268,7 @@ model_list:
   - model_name: __CLAUDE_CODE_OPUS_ALIAS__
     litellm_params:
       model: azure/responses/__AZURE_DEPLOYMENT_OPUS__
-  - model_name: __CLAUDE_CODE_FABLE_ALIAS__
+  - model_name: __CLAUDE_CODE_FABLE_ALIAS__   # config/litellm.fable-tier.yaml, spliced in only if configured
     litellm_params:
       model: azure/responses/__AZURE_DEPLOYMENT_FABLE__
   - model_name: __CLAUDE_CODE_HAIKU_ALIAS__
