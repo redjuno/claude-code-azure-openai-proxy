@@ -345,4 +345,30 @@ kill -0 "${external_pid}" 2>/dev/null || fail "external proxy was stopped"
 kill "${external_pid}"
 wait "${external_pid}" 2>/dev/null || true
 
+printf 'Test: make status and make stop work without a runtime dir override\n'
+# A copy of the scripts, so the default runtime dir lands in the test dir
+# rather than in this checkout's real .claude-runtime.
+direct_root="${TEST_DIR}/direct-root"
+mkdir -p "${direct_root}/scripts"
+cp "${ROOT_DIR}/scripts/proxy-runtime.sh" "${ROOT_DIR}/scripts/ensure-env.sh" "${direct_root}/scripts/"
+for command in status stop; do
+  env -u CLAUDE_AZURE_RUNTIME_DIR "${direct_root}/scripts/proxy-runtime.sh" "${command}" \
+    >"${TEST_DIR}/direct-${command}.log" 2>&1 &
+  direct_pid=$!
+  attempts=100
+  while kill -0 "${direct_pid}" 2>/dev/null && (( attempts > 0 )); do
+    attempts=$((attempts - 1))
+    sleep 0.05
+  done
+  if kill -0 "${direct_pid}" 2>/dev/null; then
+    kill "${direct_pid}" 2>/dev/null || true
+    wait "${direct_pid}" 2>/dev/null || true
+    command cat "${TEST_DIR}/direct-${command}.log" >&2
+    fail "proxy-runtime.sh ${command} hung when run directly"
+  fi
+  wait "${direct_pid}" || fail "proxy-runtime.sh ${command} failed when run directly"
+done
+grep -Fx "Runtime directory: ${direct_root}/.claude-runtime" "${TEST_DIR}/direct-status.log" >/dev/null \
+  || fail "make status did not use the repo's .claude-runtime"
+
 printf 'All lifecycle tests passed.\n'
