@@ -185,7 +185,10 @@ printf 'Launching Claude Code via LiteLLM: %s, model=%s\n' "${ANTHROPIC_BASE_URL
 printf 'Using Claude Code config unchanged: %s\n' "${CLAUDE_CONFIG_DIR:-${HOME}/.claude}"
 
 set +e
-claude "$@" <&0 &
+# ensure-env.sh exports all of .env, but only the proxy needs the Azure key,
+# and it already has it. Keep it out of Claude Code and every tool, hook and
+# MCP server it spawns. env execs claude, so claude_pid still is claude.
+env -u AZURE_API_KEY claude "$@" <&0 &
 claude_pid=$!
 wait "${claude_pid}"
 claude_exit_code=$?

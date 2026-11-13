@@ -48,6 +48,9 @@ EOF
 cat > "${BIN_DIR}/claude" <<'EOF'
 #!/usr/bin/env bash
 printf '%s|%s|%s\n' "$PWD" "${ANTHROPIC_BASE_URL}" "$*" >> "${MOCK_CLAUDE_RUNS}"
+if [[ -n "${MOCK_CLAUDE_ENV:-}" ]]; then
+  printf 'AZURE_API_KEY=%s\n' "${AZURE_API_KEY:-}" > "${MOCK_CLAUDE_ENV}"
+fi
 sleep "${MOCK_CLAUDE_SLEEP:-0}"
 exit "${MOCK_CLAUDE_EXIT:-0}"
 EOF
@@ -259,6 +262,11 @@ printf 'Test: cost refresh failure does not block Claude\n'
 MOCK_COST_REFRESH_EXIT=1 "${ROOT_DIR}/scripts/claude-via-azure-openai.sh" refresh-failed
 wait_for_file "${COST_REFRESHES_FILE}"
 grep -F '|refresh-failed' "${CLAUDE_RUNS_FILE}" >/dev/null || fail "Claude did not run after cost refresh failure"
+
+printf 'Test: Claude does not inherit the Azure API key\n'
+claude_env_file="${TEST_DIR}/claude-env"
+MOCK_CLAUDE_ENV="${claude_env_file}" "${ROOT_DIR}/scripts/claude-via-azure-openai.sh" no-azure-key
+grep -Fx 'AZURE_API_KEY=' "${claude_env_file}" >/dev/null || fail "Claude inherited AZURE_API_KEY"
 
 printf 'Test: automatic start, cwd preservation, exit code, and automatic stop\n'
 : > "${STARTS_FILE}"
