@@ -1,5 +1,14 @@
 #!/usr/bin/env bash
 
+# make status / make stop run this file directly, so nothing has loaded .env
+# yet. Load it before the paths below read ROOT_DIR and
+# CLAUDE_AZURE_RUNTIME_DIR, the same order the launcher uses when it sources
+# ensure-env.sh and then this file.
+if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then
+  set -euo pipefail
+  source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/ensure-env.sh"
+fi
+
 RUNTIME_DIR="${CLAUDE_AZURE_RUNTIME_DIR:-${ROOT_DIR}/.claude-runtime}"
 RUNTIME_LOCK_DIR="${RUNTIME_DIR}/lock"
 SESSIONS_DIR="${RUNTIME_DIR}/sessions"
@@ -376,8 +385,6 @@ proxy_runtime_main() {
 }
 
 if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then
-  set -euo pipefail
-  source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/ensure-env.sh"
   trap runtime_lock_release EXIT
   proxy_runtime_main "$@"
 fi
